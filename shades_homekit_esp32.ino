@@ -3,13 +3,14 @@
 #include "Helper.h"
 #include "pins.h"
 #include "net_wifi.h"
-#include <WiFi.h>
 #include "Buttons.h"
 #include <AccelStepper.h>
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include "Globals.h"
 #include "web.h"
+#include "matter_bridge.h"
+#include "LedControl.h"
 
 // Speed/settings constants
 const float SPEED_MAX = 900.0f; // steps/s
@@ -68,9 +69,8 @@ void setup()
   SERIAL_DEBUG_INIT();
   DPRINTLN("=== TEST BUILD " __DATE__ " " __TIME__ " ===");
 
-  pinMode(LED_PIN, OUTPUT);
-  // Configure LED dimming using analogWrite (LEDC-backed on ESP32)
-  analogWrite(LED_PIN, 0);
+  Led::begin();
+  Led::off();
   // BUTTON_MAIN is simulated by both UP+DOWN pressed
   pinMode(BUTTON_UP_PIN, INPUT_PULLUP);
   pinMode(BUTTON_DOWN_PIN, INPUT_PULLUP);
@@ -106,7 +106,10 @@ void setup()
                      { DPRINTF("OTA Error: %u\n", (unsigned)error); });
   ArduinoOTA.begin();
 
-  // Protocol setup (Matter to be integrated)
+  // Matter endpoint (maps shade position to a Matter dimmable light)
+  MatterBridge::begin(getCurrentPosition());
+
+  // Protocol setup (web + buttons)
   Buttons::init();
   webBegin();
 }
@@ -178,7 +181,9 @@ void loop()
   // 4. State sync - ensure position reflects current motor position
   state.currentStep = stepper.currentPosition();
 
-  // 5. Protocol loop placeholder (for Matter)
+  // 5. Matter reporting (maps position to dimmable-light endpoint)
+  bool movingNow = (stepper.distanceToGo() != 0) || (state.currentMode == CALIBRATE);
+  MatterBridge::loop(getCurrentPosition(), movingNow);
 
   // 6. Non-blocking UI tasks
   properLedDisplay();
@@ -214,18 +219,22 @@ void properLedDisplay()
     if (t > nextLedMillis)
     {
       nextLedMillis = t + LED_BLINK_INTERVAL_MS;
-      digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+      Led::toggle();
     }
     return;
   }
   // Reduce brightness when idle for LED using analogWrite
   int duty = (stepper.distanceToGo() != 0) ? 0 : 30; // dim at idle
-  analogWrite(LED_PIN, duty);
+  Led::setBrightness((uint8_t)duty);
 }
 
 void reset()
 {
+  // Clear stored state (LittleFS, Wi-Fi creds, Matter fabrics)
+  MatterBridge::factoryReset();
   helper.resetsettings();
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
 }
 
 // Turn motor power off after inactivity (kept for state housekeeping)
@@ -257,7 +266,6 @@ void handleEngineControllerActivity()
       }
       if (state.maxSteps != 0)
       {
-        int pos = getCurrentPosition();
         positionStateLocal = POS_STOPPED;
       }
       // Decide hold strategy

@@ -3,6 +3,7 @@
 #include <AccelStepper.h>
 #include "Globals.h"
 #include "pins.h"
+#include "LedControl.h"
 
 // Access acceleration constant from main TU
 extern const float ACCEL;
@@ -49,7 +50,7 @@ void BA_startBlink(int times, int ms)
   ba_blinkIntervalMs = ms;
   ba_blinkLastToggleMs = millis();
   ba_blinkLedState = true;
-  digitalWrite(LED_PIN, HIGH);
+  Led::setOn();
   ba_blinkStepsRemaining--;
 }
 
@@ -61,12 +62,15 @@ void BA_blinkUpdate()
   if ((now - ba_blinkLastToggleMs) >= ba_blinkIntervalMs)
   {
     ba_blinkLedState = !ba_blinkLedState;
-    digitalWrite(LED_PIN, ba_blinkLedState ? HIGH : LOW);
+    if (ba_blinkLedState)
+      Led::setOn();
+    else
+      Led::off();
     ba_blinkLastToggleMs = now;
     ba_blinkStepsRemaining--;
     if (ba_blinkStepsRemaining == 0)
     {
-      digitalWrite(LED_PIN, LOW);
+      Led::off();
       ba_blinkLedState = false;
       if (state.confirmBlinkActive)
       {

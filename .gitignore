@@ -1,6 +1,7 @@
 # Arduino / PlatformIO build artifacts
 build/
 .pio/
+examples/
 *.elf
 *.bin
 *.hex
