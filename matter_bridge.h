@@ -20,6 +20,10 @@ namespace MatterBridge
 
   // True when Matter endpoint was initialized.
   bool isEnabled();
+
+  // Get Matter pairing info (empty if commissioned)
+  String getQRCodeUrl();
+  String getPairingCode();
 }
 
 #endif

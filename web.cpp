@@ -1,12 +1,15 @@
 #include "web.h"
 #include <Arduino.h>
+#include <WiFi.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include "Globals.h"
 #include "Buttons.h"
 #include "ButtonActions.h"
 #include <AccelStepper.h>
-// HomeKit removed; preparing for Matter integration
+#if ENABLE_MATTER
+#include "matter_bridge.h"
+#endif
 
 extern int targetPercent;
 
@@ -105,6 +108,22 @@ Step: <code id='cur'>CUR_PLACEHOLDER</code> / <code id='max'>MAX_PLACEHOLDER</co
 </div>
 </div>
 
+<div class="card" id="matter-card" style="MATTER_DISPLAY">
+<h3>🔗 Matter Pairing</h3>
+<div id="qr-container" style="text-align:center;margin:16px 0;MATTER_QR_DISPLAY">
+<div style="background:#f8f9fa;padding:16px;border-radius:8px;margin:8px 0">
+<div style="font-size:12px;color:#666;margin-bottom:8px">Scan with Home app:</div>
+<img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=MATTER_QR_URL" style="max-width:200px;border-radius:8px" alt="QR Code">
+</div>
+<div style="font-size:11px;color:#999;margin-top:8px">Or use manual code below</div>
+</div>
+<div id="no-qr" style="MATTER_NO_QR_DISPLAY;color:#27ae60;font-size:14px;text-align:center;padding:16px">✅ Device already paired</div>
+<div style="font-size:13px;color:#666;text-align:center;margin-top:8px;MATTER_CODE_DISPLAY">
+<strong>Manual pairing code:</strong><br>
+<code id="pairing-code" style="font-size:18px;color:#2c3e50;background:#f8f9fa;padding:8px 16px;border-radius:6px;display:inline-block;margin-top:4px">MATTER_CODE</code>
+</div>
+</div>
+
 <div class="card">
 <h3>🔧 System</h3>
 <div class="btn-row">
@@ -149,6 +168,31 @@ static void handleRoot()
   htmlStr.replace("POS_PLACEHOLDER", posStr);
   htmlStr.replace("CUR_PLACEHOLDER", String(state.currentStep));
   htmlStr.replace("MAX_PLACEHOLDER", String(state.maxSteps));
+
+#if ENABLE_MATTER
+  String qrUrl = MatterBridge::getQRCodeUrl();
+  String pairingCode = MatterBridge::getPairingCode();
+  if (!qrUrl.isEmpty())
+  {
+    htmlStr.replace("MATTER_DISPLAY", "display:block");
+    htmlStr.replace("MATTER_QR_URL", qrUrl);
+    htmlStr.replace("MATTER_QR_DISPLAY", "display:block");
+    htmlStr.replace("MATTER_NO_QR_DISPLAY", "display:none");
+    htmlStr.replace("MATTER_CODE_DISPLAY", "display:block");
+    htmlStr.replace("MATTER_CODE", pairingCode);
+  }
+  else
+  {
+    htmlStr.replace("MATTER_DISPLAY", "display:block");
+    htmlStr.replace("MATTER_QR_DISPLAY", "display:none");
+    htmlStr.replace("MATTER_NO_QR_DISPLAY", "display:block");
+    htmlStr.replace("MATTER_CODE_DISPLAY", "display:none");
+    htmlStr.replace("MATTER_CODE", "-");
+  }
+#else
+  htmlStr.replace("MATTER_DISPLAY", "display:none");
+#endif
+
   page = htmlStr;
   server.send(200, "text/html; charset=UTF-8", page);
 }
@@ -327,6 +371,7 @@ static void handleStatus()
   doc["position"] = getCurrentPosition();
   doc["msg"] = state.lastMessage;
   doc["moving"] = (stepper.distanceToGo() != 0);
+  doc["ip"] = WiFi.localIP().toString();
   String out;
   serializeJson(doc, out);
   server.sendHeader("Cache-Control", "no-cache");
@@ -350,6 +395,7 @@ void webBegin()
   server.on("/preset/70", HTTP_POST, handlePreset70);
   server.on("/reboot", HTTP_POST, handleReboot);
   server.begin();
+  DPRINTF("Web server: http://%s\n", WiFi.localIP().toString().c_str());
 }
 
 void webLoop()

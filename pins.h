@@ -9,11 +9,9 @@
 // - On-board RGB LED is WS2812-compatible on GPIO9 (not the D9 header pin).
 #include <Arduino.h>
 
-// On-board addressable RGB LED (NeoPixel/WS2812) data line
-#define LED_PIXEL_PIN 9
-#define LED_PIXEL_COUNT 1
-// Compatibility alias for existing code paths
-#define LED_PIN LED_PIXEL_PIN
+// Onboard LED (standard GPIO, not addressable RGB)
+// ESP32C6 XIAO has LED on GPIO15
+#define LED_PIN 15
 
 // Buttons
 #define BUTTON_UP_PIN D8   // XIAO D8 (GPIO19 / SPI SCK)

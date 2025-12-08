@@ -1,29 +1,31 @@
-# Shades Controller (Seeed XIAO ESP32C6, Matter-ready)
+# Shades Controller (Seeed XIAO ESP32C6 + Matter)
 
-Roller shades controller for Seeed Studio XIAO ESP32C6. Drives a 28BYJ‑48 stepper via ULN2003, provides calibration, web UI, OTA updates, and exposes shade position to Matter (as a dimmable light; HomeKit code removed).
+Roller shades controller for **Seeed Studio XIAO ESP32C6**. Drives a 28BYJ‑48 stepper via ULN2003, provides WiFiManager captive portal setup, calibration, web UI with QR-code pairing, and exposes shade position to **Matter** (as a dimmable light endpoint).
 
 ## Features
 
-- Matter endpoint (exposed as a dimmable light slider; 0% = closed, 100% = open). HomeKit code removed.
-- Physical buttons: UP / DOWN; MAIN actions via simultaneous UP+DOWN.
-- LED feedback: blinks in CALIBRATE, steady (LOW, active‑low) in NORMAL.
-- Minimal persisted state (`/config.json`): currentStep, maxSteps, targetPositionValue, raw calibration points.
-- Wi‑Fi STA with stored credentials; fallback open AP `RollerShades` if STA fails. Matter commissioning (BLE on ESP32C6) can provision Wi‑Fi.
-- OTA updates via ArduinoOTA (hostname `roller_shades`).
-- Continuous calibration jogging (constant speed; acceleration disabled).
-- Web UI: movement control, presets (30% / 50% / 70%), calibration start/stop/save, safe reboot, factory reset.
-- Safe reboot: saves current position, sets target to it, HTML page with auto redirect, then restart.
+- **Matter endpoint** (exposed as a dimmable light slider; 0% = closed, 100% = open)
+- **WiFiManager captive portal** for easy WiFi setup (AP: `RollerShades`, 180s timeout)
+- **Web UI with Matter QR-code** for instant pairing via Home app or Google Home
+- Physical buttons: UP / DOWN; MAIN actions via simultaneous UP+DOWN
+- **Onboard LED** (GPIO15): blinks in CALIBRATE, steady in NORMAL
+- Minimal persisted state (`/config.json`): currentStep, maxSteps, targetPositionValue, raw calibration points
+- Continuous calibration jogging (constant speed; acceleration disabled)
+- Web UI: movement control, presets (30% / 50% / 70%), calibration start/stop/save, safe reboot, factory reset
+- Safe reboot: saves current position, sets target to it, HTML page with auto redirect, then restart
 
 ## Hardware
 
-- MCU: Seeed Studio XIAO ESP32C6
-- Stepper: 28BYJ‑48 — 12 V variant preferred for reliability and torque; ensure the ULN2003 board and power supply match the motor voltage.
-- Driver: ULN2003 board.
-- Buttons: 2 × tactile (wired to ground, `INPUT_PULLUP`, pressed = LOW).
-- LED: onboard single addressable RGB (WS2812/NeoPixel) on GPIO9 (not the D9 header pin).
-- Power: stable supply matching motor voltage; ensure adequate current for both logic and motor.
+- **MCU:** Seeed Studio XIAO ESP32C6
+- **Stepper:** 28BYJ‑48 (12V variant preferred for reliability and torque)
+- **Driver:** ULN2003 board
+- **Buttons:** 2 × tactile (wired to ground, `INPUT_PULLUP`, pressed = LOW)
+- **LED:** Onboard digital LED on **GPIO15** (changed from GPIO9 due to SPI Flash conflict)
+- **Power:** Stable supply matching motor voltage; ensure adequate current for both logic and motor
 
-Pin wiring (AccelStepper HALF4WIRE, coil order MOTOR_IN1, MOTOR_IN3, MOTOR_IN2, MOTOR_IN4 as used in code):
+### Pin wiring
+
+AccelStepper HALF4WIRE, coil order MOTOR_IN1, MOTOR_IN3, MOTOR_IN2, MOTOR_IN4:
 
 - MOTOR_IN1 → D1 (GPIO1)
 - MOTOR_IN2 → D2 (GPIO2)
@@ -31,25 +33,32 @@ Pin wiring (AccelStepper HALF4WIRE, coil order MOTOR_IN1, MOTOR_IN3, MOTOR_IN2, 
 - MOTOR_IN4 → D4 (GPIO22 / I2C SDA)
 - BUTTON_UP_PIN → D8 (GPIO19 / SPI SCK)
 - BUTTON_DOWN_PIN → D9 (GPIO20 / SPI MISO)
-- LED pixel DIN → GPIO9 (built-in NeoPixel)
+- LED_PIN → GPIO15 (onboard LED, digital output)
 
-Seeed Studio XIAO ESP32C6 pin map (per official Arduino variant `pins_arduino.h`):
+**XIAO ESP32C6 pin map:**
 D0=GPIO0, D1=GPIO1, D2=GPIO2, D3=GPIO21, D4=GPIO22, D5=GPIO23, D6=GPIO16 (TX),
-D7=GPIO17 (RX), D8=GPIO19 (SCK), D9=GPIO20 (MISO), D10=GPIO18 (MOSI), LED=GPIO15,
-I2C SDA=GPIO22, I2C SCL=GPIO23, SPI SS=GPIO21.
+D7=GPIO17 (RX), D8=GPIO19 (SCK), D9=GPIO20 (MISO), D10=GPIO18 (MOSI), LED=GPIO15
 
-On-board addressable RGB LED (WS2812-compatible) is wired to GPIO9. Use NeoPixel/FastLED
-libraries; it is not controllable via `digitalWrite`/`analogWrite`.
+**⚠️ Important:** GPIO9-15 are reserved for SPI Flash on ESP32C6 and cannot be used for peripherals like NeoPixel. The onboard LED is connected to GPIO15 and works as a simple digital output.
 
-To reverse motor direction just flip the wiring order of the four ULN2003 inputs. For example: IN1→D1, IN2→D5, IN3→D6, IN4→D7 (no code changes are required when you flip the wiring).
+**Motor direction:** To reverse motor direction, flip the wiring order of the four ULN2003 inputs (e.g., IN1→D4, IN2→D3, IN3→D2, IN4→D1). No code changes required.
 
-Note: Adjust pins in `pins.h` if your wiring differs.
+**Custom pins:** Adjust pins in `pins.h` if your wiring differs.
 
 ## First Setup
 
-1. Power the device. If Wi‑Fi creds are stored it connects as STA; otherwise it starts an open AP `RollerShades` and also awaits Matter commissioning (BLE on ESP32C6).
-2. Commission via Matter (preferred): add a new accessory in your controller, use the manual code `34970112332` or the QR URL printed on Serial, and complete pairing to push Wi‑Fi credentials.
-3. Calibrate via web UI or buttons.
+1. **Power on** the device
+2. **Connect to WiFi:**
+   - Device starts captive portal AP: **RollerShades** (no password, 180s timeout)
+   - Connect to it, enter your WiFi credentials in the captive portal
+   - Device saves credentials and connects to your network
+3. **Access Web UI:**
+   - Check your router for device IP address (e.g. `http://192.168.x.x`)
+   - Web interface shows Matter QR-code and pairing code
+4. **Pair with Matter** (optional):
+   - iOS Home app: Add Accessory → Scan QR-code from web page
+   - Or enter manual code: `34970112332`
+5. **Calibrate** via web UI or buttons (see Calibration section)
 
 ## Calibration
 
@@ -87,7 +96,7 @@ Save triggers:
 
 ## Reset & Safe Reboot
 
-- Factory reset (MAIN ~10s): clears Wi‑Fi creds, Matter fabric, and LittleFS config file; restarts.
+- Factory reset (MAIN ~10s): clears Wi‑Fi creds, Matter fabric, and SPIFFS config file; restarts.
 - Safe Reboot (web `/reboot`): stops motion, sets target=current position, saves config, serves HTML "Rebooting" page (auto redirect ~15s), restarts.
 
 ## Matter Endpoint
@@ -95,28 +104,32 @@ Save triggers:
 - The current Arduino Matter package does not expose a Window Covering endpoint, so the shades are mapped to a **Dimmable Light** endpoint where brightness == position (0% closed, 100% open). On/Off maps to closed/open.
 - Commission with the manual pairing code `34970112332` or the QR URL printed on Serial (same as the Espressif examples).
 - ESP32C6 uses BLE for commissioning; if you clear Matter (long press MAIN ~10s), the device decommissions and is ready for re‑pairing on next boot.
-- Once commissioned, Matter provides the Wi‑Fi credentials used by the web UI and OTA.
 
 ## Web UI
 
-Root (`/`): Mode, current step, maxSteps, percent position, last message, buttons: Up / Down / Stop, Presets 30/50/70, Start/Exit Calibration, Save Top/Bottom, Safe Reboot, Factory Reset.
+**Access:** `http://<device-ip>` (check your router for IP address)
 
-Status polling: JS fetches `/status` every 200 ms. Stop button blinks while position changes. Messages display movement or calibration feedback (errors highlighted).
+**Main features:**
 
-Endpoints (POST unless marked GET):
+- **Matter Pairing section:** QR-code for instant pairing + manual code `34970112332`
+- **Control:** Up/Down/Stop buttons, presets (30%/50%/70%)
+- **Calibration:** Start/Exit, Save Top/Bottom positions
+- **System:** Safe Reboot, Factory Reset
 
-- `/cal/start`, `/cal/stop`
-- `/cal/up/start`, `/cal/down/start` (toggle continuous jog in CALIBRATE)
-- `/preset/30`, `/preset/50`, `/preset/70` (move to 30% / 50% / 70%)
-- `/cal/hold/stop` (stop jog OR STOP motion in NORMAL)
-- `/cal/saveTop`, `/cal/saveBottom`
-- `/reboot` (safe reboot)
-- `/factory` (factory reset)
-- `/status` (GET): JSON `{ currentStep, maxSteps, mode, position, msg }`
+**Status polling:** JavaScript fetches `/status` every 200ms. Stop button blinks while moving.
 
-Writes to SPIFFS limited to essential moments (movement completion, calibration success, reboot).
+**API Endpoints (POST unless marked GET):**
 
-You can reach the web UI either by entering the device IP in your browser (for example `http://192.168.x.y/`) or, once mDNS is active, via `http://roller_shades.local/` on the same LAN.
+- `/cal/start`, `/cal/stop` - enter/exit calibration mode
+- `/cal/up/start`, `/cal/down/start` - toggle continuous jog in CALIBRATE
+- `/preset/30`, `/preset/50`, `/preset/70` - move to position
+- `/cal/hold/stop` - stop jog or motion
+- `/cal/saveTop`, `/cal/saveBottom` - save calibration points
+- `/reboot` - safe reboot (saves state first)
+- `/factory` - factory reset (clears WiFi + Matter + config)
+- `/status` (GET) - JSON: `{ currentStep, maxSteps, mode, position, msg, moving }`
+
+**Storage:** SPIFFS writes happen only on movement completion, calibration success, or reboot.
 
 ## 3D Files
 
@@ -126,24 +139,28 @@ Smart roller shades printable parts and enclosure:
 
 ## Software & Build
 
-- Board: `esp32:esp32:XIAO_ESP32C6`
-- Libraries: Matter (ESP32 Arduino), ArduinoJson v7, AccelStepper, EasyButton, WebServer, LittleFS,
-  ArduinoOTA, Adafruit_NeoPixel (for the on-board WS2812).
-- Serial: 115200 baud.
-- Partition scheme: select `huge_app` (or another >2.8 MB app slot) for Matter builds.
+**Required:**
 
-Build & upload via Arduino CLI:
+- **Board:** `esp32:esp32:XIAO_ESP32C6`
+- **Partition scheme:** `huge_app` (3MB APP) - required for Matter builds
+- **Libraries:** Matter, ArduinoJson v7, AccelStepper, EasyButton, WebServer, WiFiManager, LittleFS
+- **Serial:** 115200 baud
 
-```zsh
-arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C6 --build-property build.partitions=huge_app .
-arduino-cli upload -p /dev/tty.usbmodemXXXX --fqbn esp32:esp32:XIAO_ESP32C6 --build-property build.partitions=huge_app .
+### Compilation
+
+```bash
+# Build to ./build folder
+arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C6:PartitionScheme=huge_app \
+  --build-path ./build .
 ```
 
-OTA update (device hostname `roller_shades`):
+### Upload via USB
 
-```zsh
-python3 $HOME/Library/Arduino15/packages/esp32/tools/espota/*/espota.py \
-  -i roller_shades.local -p 3232 -f /path/to/firmware.bin
+```bash
+# Upload via USB (find port with: ls /dev/cu.*)
+arduino-cli upload --fqbn esp32:esp32:XIAO_ESP32C6:PartitionScheme=huge_app \
+  -p /dev/cu.usbmodem2101 \
+  --input-dir ./build .
 ```
 
 ### Constants & Configuration
@@ -166,17 +183,50 @@ arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C6 --build-property build.parti
   --build-property build.extra_flags="-DSHADES_DEBUG" .
 ```
 
-## Matter Integration (ESP32C6)
+## Matter Integration
 
-- Seeed guide: https://wiki.seeedstudio.com/xiao_esp32_matter_env/
-- Arduino Matter exposes the shades as a dimmable light (position slider) because a native window-covering endpoint is not yet available.
-- Commission over BLE with the code `34970112332` (or the QR URL printed on Serial).
-```
+**Pairing:**
+
+- Open web UI at device IP address
+- Scan QR-code in Matter Pairing section with Home app (iOS) or Google Home
+- Or enter manual code: **34970112332**
+
+**Endpoint type:** Dimmable Light (native Window Covering endpoint not yet available in Arduino Matter)
+
+- Brightness slider = shade position (0% closed, 100% open)
+- On/Off switch = closed/open state
+
+**Commissioning:** Uses BLE on ESP32C6 for initial pairing, then WiFi for control
+
+**Factory reset:** Hold both buttons ~10s to clear Matter fabric and WiFi credentials
+
+**Resources:**
+
+- [Seeed XIAO ESP32C6 Matter Guide](https://wiki.seeedstudio.com/xiao_esp32_matter_env/)
+
+## Troubleshooting
+
+**Device not booting:**
+
+- Check Serial Monitor (115200 baud) for boot messages
+- Verify GPIO9-15 are not used for peripherals (reserved for SPI Flash on ESP32C6)
+
+**WiFi not connecting:**
+
+- Factory reset: hold both buttons ~10s
+- Connect to "RollerShades" AP and reconfigure WiFi
+
+**Matter pairing fails:**
+
+- Verify device is not already commissioned (factory reset if needed)
+- Use QR-code from web UI (auto-generated by Matter library)
+- Check Serial Monitor for pairing status
 
 ## Inspiration
 
-- <https://www.thingiverse.com/thing:2392856/>
+- Original design: [Thingiverse thing:2392856](https://www.thingiverse.com/thing:2392856/)
+- 3D printable parts: [Printables model 1505710](https://www.printables.com/model/1505710-smart-roller-shades-esp8266-homekit)
 
 ## License
 
-Non‑commercial use (as‑is).
+Non-commercial use (as-is).

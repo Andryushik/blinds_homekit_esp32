@@ -7,13 +7,14 @@
 #undef NO_INLINE
 #endif
 #include <ArduinoJson.h>
-#include <LittleFS.h>
+#include <SPIFFS.h>
 #include <WiFi.h>
 
 class Helper
 {
 public:
   Helper();
+  bool begin(); // mount FS (format on failure)
   boolean loadconfig();
   JsonObjectConst getconfig() const;
   boolean saveconfig(const JsonDocument &json);

@@ -5,12 +5,24 @@
 #include "net_wifi.h"
 #include "Buttons.h"
 #include <AccelStepper.h>
-#include <ArduinoOTA.h>
 #include <WiFi.h>
 #include "Globals.h"
 #include "web.h"
-#include "matter_bridge.h"
 #include "LedControl.h"
+#if ENABLE_MATTER
+#include "matter_bridge.h"
+#else
+namespace MatterBridge
+{
+  inline void begin(int) {}
+  inline void loop(int, bool) {}
+  inline void factoryReset() {}
+}
+#endif
+
+#if ESP_COREDUMP_ENABLE
+#include "esp_core_dump.h"
+#endif
 
 // Speed/settings constants
 const float SPEED_MAX = 900.0f; // steps/s
@@ -66,8 +78,16 @@ void shadesControl();
 void setup()
 {
   Serial.begin(115200);
+  delay(1000);
   SERIAL_DEBUG_INIT();
-  DPRINTLN("=== TEST BUILD " __DATE__ " " __TIME__ " ===");
+  DPRINTLN("=== Roller Shades " __DATE__ " " __TIME__ " ===");
+
+  // Clear any stale core dump metadata that can block boot with CRC errors
+#if ESP_COREDUMP_ENABLE
+  esp_core_dump_image_erase();
+#endif
+
+  helper.begin();
 
   Led::begin();
   Led::off();
@@ -81,37 +101,20 @@ void setup()
   if (state.maxSteps == 0)
     enableCalibrationMode();
 
-  // Initialize stepper with normal motion profile
   stepper.setMaxSpeed(SPEED_MAX);
   stepper.setAcceleration(ACCEL);
-  // Optional: tune pulse width for ULN2003 if needed (default is usually fine)
-  // stepper.setMinPulseWidth(2);
   stepper.setCurrentPosition(state.currentStep);
 
   wifiConnect();
-  // Print chosen hostname and IP for quick verification (ESP32)
-  Serial.printf("Host: %s, IP: %s\n", WiFi.getHostname(), WiFi.localIP().toString().c_str());
 
-  // OTA setup (ArduinoOTA)
-  ArduinoOTA.setHostname("roller_shades");
-  ArduinoOTA.onStart([]()
-                     { DPRINTLN("OTA Start"); });
-  ArduinoOTA.onEnd([]()
-                   { DPRINTLN("OTA End"); });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
-                        {
-                          // low-noise progress
-                        });
-  ArduinoOTA.onError([](ota_error_t error)
-                     { DPRINTF("OTA Error: %u\n", (unsigned)error); });
-  ArduinoOTA.begin();
-
-  // Matter endpoint (maps shade position to a Matter dimmable light)
+  // Matter endpoint
+#if ENABLE_MATTER
   MatterBridge::begin(getCurrentPosition());
+#endif
 
-  // Protocol setup (web + buttons)
   Buttons::init();
   webBegin();
+  DPRINTLN("Setup complete");
 }
 
 void loop()
@@ -188,9 +191,6 @@ void loop()
   // 6. Non-blocking UI tasks
   properLedDisplay();
 
-  // OTA handler
-  ArduinoOTA.handle();
-
   // 7. Housekeeping - run less frequently to avoid frequent SPIFFS/heavy ops
   if (millis() - lastHousekeeping >= HOUSEKEEP_MS)
   {
@@ -198,8 +198,9 @@ void loop()
     lastHousekeeping = millis();
   }
 
-  // 8. Web - run at the end of the loop (may be heavier)
+  // 8. Web and WiFi - run at the end of the loop
   webLoop();
+  wifiLoop(); // Keep mDNS alive
 
   // 9. Yield
   yield();
@@ -211,30 +212,69 @@ void properLedDisplay()
   // While confirmation blink runs, suppress slow blink to avoid overlap
   if (state.confirmBlinkActive)
     return;
-  // Blink LED if in calibration OR if not calibrated yet (initial setup/factory reset)
-  bool shouldBlink = (state.currentMode == CALIBRATE) || (state.maxSteps == 0);
-  if (shouldBlink)
+
+  const uint32_t t = millis();
+  bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+  bool isCalibrated = (state.maxSteps > 0);
+
+  // LED behavior based on state:
+  // 1. CALIBRATE mode → bright blinking (400ms interval)
+  // 2. Not calibrated yet → fast blinking (200ms interval)
+  // 3. WiFi captive portal → fast blinking (200ms interval)
+  // 4. NORMAL + calibrated + WiFi → 1% brightness (dim glow)
+
+  if (state.currentMode == CALIBRATE)
   {
-    const uint32_t t = millis();
+    // Calibration: bright 400ms blink
     if (t > nextLedMillis)
     {
-      nextLedMillis = t + LED_BLINK_INTERVAL_MS;
+      nextLedMillis = t + 400;
       Led::toggle();
     }
     return;
   }
-  // Reduce brightness when idle for LED using analogWrite
-  int duty = (stepper.distanceToGo() != 0) ? 0 : 30; // dim at idle
-  Led::setBrightness((uint8_t)duty);
+
+  if (!isCalibrated || !wifiConnected)
+  {
+    // Not calibrated or no WiFi: fast 200ms blink
+    if (t > nextLedMillis)
+    {
+      nextLedMillis = t + 200;
+      Led::toggle();
+    }
+    return;
+  }
+
+  // Normal operation + calibrated + WiFi connected
+  bool moving = (stepper.distanceToGo() != 0);
+
+  // Debug output every 2 seconds
+  static unsigned long lastDebug = 0;
+  if (millis() - lastDebug > 2000)
+  {
+    lastDebug = millis();
+    DPRINTF("LED: moving=%d, distanceToGo=%ld\n", moving, stepper.distanceToGo());
+  }
+
+  if (moving)
+  {
+    // Moving: bright 100%
+    Led::setBrightness(255);
+  }
+  else
+  {
+    // Idle: very dim glow (1%)
+    Led::setBrightness(3);
+  }
 }
 
 void reset()
 {
-  // Clear stored state (LittleFS, Wi-Fi creds, Matter fabrics)
   MatterBridge::factoryReset();
   helper.resetsettings();
-  WiFi.disconnect(true, true);
-  WiFi.mode(WIFI_OFF);
+  wifiReset();
+  delay(1000);
+  ESP.restart();
 }
 
 // Turn motor power off after inactivity (kept for state housekeeping)
@@ -385,6 +425,8 @@ void shadesControl()
   // Command stepper to the target (run() moves it)
   if (targetStep != stepper.targetPosition())
   {
+    Serial.printf("shadesControl: %d%% → step %ld (cur %ld, max %d)\n",
+                  tp, targetStep, stepper.currentPosition(), state.maxSteps);
     // Ensure coils are energized before a new move
     stepper.enableOutputs();
     stepper.moveTo(targetStep);

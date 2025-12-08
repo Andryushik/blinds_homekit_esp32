@@ -1,5 +1,7 @@
-#include "matter_bridge.h"
 #include "Globals.h"
+
+#if ENABLE_MATTER
+#include "matter_bridge.h"
 
 extern int targetPercent;
 
@@ -40,6 +42,7 @@ namespace MatterBridge
   static bool started = false;
   static int lastReportedPercent = -1;
   static uint32_t lastReportMs = 0;
+  static bool ignoreNextCallback = false; // Flag to prevent feedback loop
 
   static void publishPercent(int percent, bool force)
   {
@@ -52,6 +55,9 @@ namespace MatterBridge
     uint8_t level = percentToLevel(p);
     bool on = (p > 0);
 
+    // Prevent onChange callback from triggering during our own updates
+    ignoreNextCallback = true;
+
     // Update attributes (maps percent to brightness)
     shadeEndpoint.setBrightness(level);
     shadeEndpoint.setOnOff(on);
@@ -61,9 +67,19 @@ namespace MatterBridge
 
   static bool onMatterChange(bool on, uint8_t brightness)
   {
+    // Ignore callbacks triggered by our own publishPercent() calls
+    if (ignoreNextCallback)
+    {
+      ignoreNextCallback = false;
+      return true;
+    }
+
     // Map Matter dimmer change back to targetPercent; off maps to 0%
     int percent = on ? levelToPercent(brightness) : 0;
-    targetPercent = clampPercent(percent);
+    int newTarget = clampPercent(percent);
+
+    Serial.printf("Matter: command received %d%% (current target was %d%%)\n", newTarget, targetPercent);
+    targetPercent = newTarget;
     return true;
   }
 
@@ -74,23 +90,30 @@ namespace MatterBridge
 
     if (!shadeEndpoint.begin(p > 0, level))
     {
-      DPRINTLN("Matter: failed to init dimmable endpoint");
+      DPRINTLN("Matter: failed to init endpoint");
       return;
     }
 
     shadeEndpoint.onChange(onMatterChange);
-
     Matter.begin();
     started = true;
 
     if (Matter.isDeviceCommissioned())
     {
-      // Keep controller/UI in sync on reboot
+      Serial.println("Matter: устройство уже добавлено");
       shadeEndpoint.updateAccessory();
     }
+    else
+    {
+      Serial.println("\n=== MATTER PAIRING ===");
+      Serial.println("QR Code URL: " + Matter.getOnboardingQRCodeUrl());
+      Serial.println("Manual code: " + Matter.getManualPairingCode());
+      Serial.println("======================\n");
+    }
+
     publishPercent(p, true);
     lastReportMs = millis();
-    DPRINTLN("Matter: endpoint ready");
+    DPRINTLN("Matter: ready");
   }
 
   void loop(int currentPercent, bool moving)
@@ -118,8 +141,34 @@ namespace MatterBridge
   }
 
   bool isEnabled() { return started; }
+
+  String getQRCodeUrl()
+  {
+    if (!started || Matter.isDeviceCommissioned())
+      return "";
+    return Matter.getOnboardingQRCodeUrl();
+  }
+
+  String getPairingCode()
+  {
+    if (!started || Matter.isDeviceCommissioned())
+      return "";
+    return Matter.getManualPairingCode();
+  }
 }
 #else
+namespace MatterBridge
+{
+  void begin(int) {}
+  void loop(int, bool) {}
+  void factoryReset() {}
+  bool isEnabled() { return false; }
+  String getQRCodeUrl() { return ""; }
+  String getPairingCode() { return ""; }
+}
+#endif
+#else // ENABLE_MATTER
+#include "matter_bridge.h"
 namespace MatterBridge
 {
   void begin(int) {}
