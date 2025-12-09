@@ -21,6 +21,7 @@ void wifiConnect()
 
   wifiManager.setConfigPortalTimeout(180);
 
+  WiFi.setHostname("RollerShades");
   WiFi.setSleep(false);
 
   if (!wifiManager.autoConnect("RollerShades"))
