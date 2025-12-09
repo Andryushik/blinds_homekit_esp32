@@ -3,6 +3,7 @@
 #include <WiFiManager.h>
 #include "net_wifi.h"
 #include "Globals.h"
+#include "LedControl.h"
 
 void wifiConnect()
 {
@@ -11,7 +12,9 @@ void wifiConnect()
   wifiManager.setAPCallback([](WiFiManager *myWiFiManager)
                             {
     DPRINTLN("Config portal started");
-    DPRINTF("Connect to 'RollerShades' WiFi or go to: http://%s\n", WiFi.softAPIP().toString().c_str()); });
+    DPRINTF("Connect to 'RollerShades' WiFi or go to: http://%s\n", WiFi.softAPIP().toString().c_str());
+    // Turn LED ON bright during captive portal
+    Led::setBrightness(255); });
 
   wifiManager.setSaveConfigCallback([]()
                                     { DPRINTLN("WiFi config saved"); });

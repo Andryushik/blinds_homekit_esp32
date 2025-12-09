@@ -217,15 +217,27 @@ void properLedDisplay()
   bool wifiConnected = (WiFi.status() == WL_CONNECTED);
   bool isCalibrated = (state.maxSteps > 0);
 
+  // Static mode tracking
+  static bool wasInCalibrate = false;
+  static bool wasInBlinkMode = false;
+
   // LED behavior based on state:
   // 1. CALIBRATE mode → bright blinking (400ms interval)
   // 2. Not calibrated yet → fast blinking (200ms interval)
-  // 3. WiFi captive portal → fast blinking (200ms interval)
-  // 4. NORMAL + calibrated + WiFi → 1% brightness (dim glow)
+  // 3. WiFi disconnected → fast blinking (200ms interval)
+  // 4. NORMAL + calibrated + WiFi → moving: 100% / idle: 1% brightness
 
   if (state.currentMode == CALIBRATE)
   {
     // Calibration: bright 400ms blink
+    if (!wasInCalibrate)
+    {
+      Led::off(); // Reset LED state on mode entry
+      nextLedMillis = 0;
+      wasInCalibrate = true;
+      wasInBlinkMode = false;
+    }
+
     if (t > nextLedMillis)
     {
       nextLedMillis = t + 400;
@@ -237,6 +249,14 @@ void properLedDisplay()
   if (!isCalibrated || !wifiConnected)
   {
     // Not calibrated or no WiFi: fast 200ms blink
+    if (!wasInBlinkMode)
+    {
+      Led::off(); // Reset LED state on mode entry
+      nextLedMillis = 0;
+      wasInBlinkMode = true;
+      wasInCalibrate = false;
+    }
+
     if (t > nextLedMillis)
     {
       nextLedMillis = t + 200;
@@ -245,16 +265,12 @@ void properLedDisplay()
     return;
   }
 
+  // Normal mode: reset blink flags
+  wasInCalibrate = false;
+  wasInBlinkMode = false;
+
   // Normal operation + calibrated + WiFi connected
   bool moving = (stepper.distanceToGo() != 0);
-
-  // Debug output every 2 seconds
-  static unsigned long lastDebug = 0;
-  if (millis() - lastDebug > 2000)
-  {
-    lastDebug = millis();
-    DPRINTF("LED: moving=%d, distanceToGo=%ld\n", moving, stepper.distanceToGo());
-  }
 
   if (moving)
   {

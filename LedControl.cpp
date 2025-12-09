@@ -37,9 +37,15 @@ namespace Led
   void toggle()
   {
     if (currentBrightness > 0)
-      off();
+    {
+      ledcWrite(LED_PIN, 255); // OFF (inverted)
+      currentBrightness = 0;
+    }
     else
-      setOn(255);
+    {
+      ledcWrite(LED_PIN, 0); // ON at full brightness (inverted)
+      currentBrightness = 255;
+    }
   }
 
   bool isOn()
