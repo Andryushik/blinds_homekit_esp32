@@ -26,10 +26,6 @@ int calculatePercentForStep(long stepPosition)
   return percent;
 }
 
-// External symbols from main TU and other modules
-extern int targetPercent;
-extern int positionStateLocal;
-
 extern AccelStepper stepper;
 extern ShadesState state;
 extern int getCurrentPosition();
@@ -92,7 +88,7 @@ void BA_moveToPercent(int percent)
     tp = 0;
   else if (tp > 100)
     tp = 100;
-  targetPercent = tp;
+  state.targetPercent = tp;
   Serial.printf("BA_moveToPercent: set targetPercent=%d%% (currentPos=%d%%, currentStep=%ld, maxSteps=%d)\n",
                 tp, getCurrentPosition(), stepper.currentPosition(), state.maxSteps);
   if (tp == 100)
@@ -121,7 +117,7 @@ void BA_stopMotion()
 
     // Immediately update local target to STOP position to prevent overwrite
     int stopPercent = calculatePercentForStep(stopPos);
-    targetPercent = stopPercent;
+    state.targetPercent = stopPercent;
 
     state.lastMessage = F("Stopping...");
   }
@@ -133,8 +129,7 @@ void BA_stopMotion()
 
     // Update local target immediately
     int currentPercent = getCurrentPosition();
-    targetPercent = currentPercent;
-    positionStateLocal = POS_STOPPED;
+    state.targetPercent = currentPercent;
     state.lastMessage = F("Stopped");
   }
 }
@@ -206,7 +201,7 @@ bool BA_calibrationSaveBottom()
   int rebasedCurrent = state.currentStep - state.upStep;
   stepper.setCurrentPosition(rebasedCurrent);
   state.currentStep = rebasedCurrent;
-  targetPercent = 0;
+  state.targetPercent = 0;
   state.confirmBlinkActive = true;
   state.exitCalibrationAfterBlink = true;
   stepper.setMaxSpeed(SPEED_MAX);
@@ -227,6 +222,4 @@ void BA_factoryReset()
 {
   DPRINTLN("BA: Factory reset requested");
   reset();
-  delay(300);
-  ESP.restart();
 }

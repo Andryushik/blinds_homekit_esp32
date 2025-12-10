@@ -6,7 +6,7 @@ ESP32-based roller shades controller with native HomeKit support via HomeSpan.
 
 - **HomeKit Native** - Direct HomeKit integration via HomeSpan (no bridge needed)
 - **WindowCovering Service** - Proper shades/blinds control in Home app
-- **WiFi Configuration** - WiFiManager captive portal for easy setup
+- **WiFi Configuration** - HomeSpan's built-in Access Point for WiFi setup
 - **Physical Controls** - Two-button interface for manual operation
 - **Web Interface** - Built-in web UI for control and configuration
 - **Calibration** - Automatic range calibration with position persistence
@@ -51,7 +51,7 @@ Default pins (configurable in `pins.h`):
 arduino-cli lib install AccelStepper
 arduino-cli lib install EasyButton
 arduino-cli lib install ArduinoJson
-arduino-cli lib install WiFiManager
+arduino-cli lib install HomeSpan AccelStepper ArduinoJson
 arduino-cli lib install HomeSpan
 ```
 
@@ -74,7 +74,7 @@ arduino-cli lib install HomeSpan
 1. Open Home app on iPhone/iPad
 2. Tap **+** → **Add Accessory** → **More Options**
 3. Select **"Roller Shades"** from the list
-4. Enter setup code: **466-37-726**
+4. Enter setup code: **281-42-814**
 5. Assign to room and done!
 
 ## Usage
@@ -111,7 +111,7 @@ Access via `http://rollershades.local` or IP address:
 - **Control Panel** - Open/Close/Stop, 30%/50%/70% presets
 - **Current Position** - Real-time percentage display
 - **Calibration** - Enter/exit calibration, save positions
-- **HomeKit Pairing** - Shows setup code 466-37-726
+- **HomeKit Pairing** - Shows setup code 281-42-814
 - **System** - Reboot or factory reset
 
 ### HomeKit Control
@@ -148,7 +148,7 @@ const int MIN_TRAVEL = 4096;          // minimum calibration distance
 
 ### HomeKit Settings (`homespan_bridge.cpp`)
 
-- Setup code: `466-37-726` (default, can be changed in code)
+- Setup code: `281-42-814` (default, can be changed in code)
 - Device name: "Roller Shades"
 - Category: Window Coverings
 
@@ -174,7 +174,7 @@ const int MIN_TRAVEL = 4096;          // minimum calibration distance
 - Remove from Home app if present
 - Reboot device and re-pair
 - Ensure iPhone/iPad on same WiFi network
-- Try setup code again: 466-37-726
+- Try setup code again: 281-42-814
 
 ### Position Drift
 
@@ -196,7 +196,9 @@ const int MIN_TRAVEL = 4096;          // minimum calibration distance
 - **HomeSpan 2.1.6+** - Native HomeKit integration
 - **AccelStepper 1.64+** - Smooth motor control
 - **EasyButton 2.0.3+** - Debounced button input
-- **WiFiManager 2.0.17+** - WiFi setup
+- **HomeSpan 2.1.6+** - Native HomeKit support
+- **AccelStepper 1.64+** - Stepper motor control
+- **ArduinoJson 7+** - Configuration storage
 - **ArduinoJson 7.4+** - Config storage
 
 ### Storage
@@ -247,7 +249,7 @@ MIT License
 ## Credits
 
 - [HomeSpan](https://github.com/HomeSpan/HomeSpan) - Excellent HomeKit library for ESP32
-- [WiFiManager](https://github.com/tzapu/WiFiManager) - Easy WiFi configuration
+- [HomeSpan](https://github.com/HomeSpan/HomeSpan) - Native HomeKit library with built-in WiFi management
 - [AccelStepper](http://www.airspayce.com/mikem/arduino/AccelStepper/) - Smooth motor control
 
 ## Support

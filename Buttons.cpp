@@ -3,11 +3,9 @@
 #include <AccelStepper.h>
 #include "pins.h"
 #include "Buttons.h"
-#include "net_wifi.h"
 #include "ButtonActions.h"
 
-// Local target percentage state
-extern int targetPercent;
+// Target percentage is kept in shared state
 
 // Functions implemented elsewhere in the main TU
 extern void reset();
@@ -193,17 +191,17 @@ namespace Buttons
         {
           if (pendingPresetDir < 0)
           {
-            if (targetPercent != 100)
+            if (state.targetPercent != 100)
             {
-              targetPercent = 100;
+              state.targetPercent = 100;
               state.lastMessage = F("Moving UP");
             }
           }
           else if (pendingPresetDir > 0)
           {
-            if (targetPercent != 0)
+            if (state.targetPercent != 0)
             {
-              targetPercent = 0;
+              state.targetPercent = 0;
               state.lastMessage = F("Moving DOWN");
             }
           }

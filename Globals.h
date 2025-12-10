@@ -64,10 +64,11 @@ struct ShadesState
   bool exitCalibrationAfterBlink;         // leave CALIBRATE when confirmation finishes
 
   // ---- Position / raw calibration points ----
-  int currentStep; // Current absolute step (rebased after calibration)
-  int maxSteps;    // Total travel after calibration (bottom raw - top raw)
-  int upStep;      // Raw step captured at TOP during calibration
-  int downStep;    // Raw step captured at BOTTOM during calibration
+  int currentStep;   // Current absolute step (rebased after calibration)
+  int maxSteps;      // Total travel after calibration (bottom raw - top raw)
+  int upStep;        // Raw step captured at TOP during calibration
+  int downStep;      // Raw step captured at BOTTOM during calibration
+  int targetPercent; // Target position in percent (0-100)
 
   // ---- Calibration jogging control ----
   int8_t calJogDir;       // -1 up, 0 stop, +1 down (continuous jog direction)

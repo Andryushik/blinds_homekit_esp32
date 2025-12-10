@@ -1,15 +1,11 @@
 #include "web.h"
 #include <Arduino.h>
-#include <WiFi.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include "Globals.h"
 #include "Buttons.h"
 #include "ButtonActions.h"
 #include <AccelStepper.h>
-#include "homespan_bridge.h"
-
-extern int targetPercent;
 
 // Accessors provided by main translation unit
 extern int getCurrentPosition();
@@ -162,15 +158,8 @@ static void handleRoot()
   htmlStr.replace("CUR_PLACEHOLDER", String(state.currentStep));
   htmlStr.replace("MAX_PLACEHOLDER", String(state.maxSteps));
 
-  // HomeKit always enabled
-  if (HomeSpanBridge::isEnabled())
-  {
-    htmlStr.replace("HOMEKIT_DISPLAY", "display:block");
-  }
-  else
-  {
-    htmlStr.replace("HOMEKIT_DISPLAY", "display:none");
-  }
+  // HomeKit (HomeSpan) always enabled
+  htmlStr.replace("HOMEKIT_DISPLAY", "display:block");
 
   page = htmlStr;
   server.send(200, "text/html; charset=UTF-8", page);
@@ -310,7 +299,7 @@ static void handleReboot()
 {
   DPRINTLN("WEB: Safe Reboot requested");
   int currentPercent = getCurrentPosition();
-  targetPercent = currentPercent;
+  state.targetPercent = currentPercent;
   stepper.stop();
   state.currentStep = stepper.currentPosition();
   if (!saveConfig())
@@ -350,7 +339,7 @@ static void handleStatus()
   doc["position"] = getCurrentPosition();
   doc["msg"] = state.lastMessage;
   doc["moving"] = (stepper.distanceToGo() != 0);
-  doc["ip"] = WiFi.localIP().toString();
+  doc["ip"] = "check_homespan_serial";
   String out;
   serializeJson(doc, out);
   server.sendHeader("Cache-Control", "no-cache");

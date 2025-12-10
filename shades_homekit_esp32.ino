@@ -1,19 +1,13 @@
 #include <Arduino.h>
-#include <stddef.h>
+#include "HomeSpan.h"
+#include <nvs_flash.h>
 #include "Helper.h"
 #include "pins.h"
-#include "net_wifi.h"
 #include "Buttons.h"
 #include <AccelStepper.h>
-#include <WiFi.h>
 #include "Globals.h"
 #include "web.h"
 #include "LedControl.h"
-#include "homespan_bridge.h"
-
-#if ESP_COREDUMP_ENABLE
-#include "esp_core_dump.h"
-#endif
 
 // Speed/settings constants
 const float SPEED_MAX = 900.0f; // steps/s
@@ -41,6 +35,7 @@ ShadesState state = {
     .maxSteps = 0,
     .upStep = 0,
     .downStep = 0,
+    .targetPercent = 0,
     .calJogDir = 0,
     .calRequireRelease = false,
     .holdingActive = false,
@@ -52,11 +47,7 @@ ShadesState state = {
     .lastMovementTime = 0,
     .lastMessage = String()};
 
-// Target position (0-100%) and movement state for shade control
-int targetPercent = 0;
-int positionStateLocal = POS_STOPPED;
-
-static uint32_t nextLedMillis = 0;
+// HomeSpan Service will be defined in setup
 
 int getCurrentPosition();
 bool loadConfig();
@@ -69,19 +60,10 @@ void shadesControl();
 void setup()
 {
   Serial.begin(115200);
-  delay(1000);
   SERIAL_DEBUG_INIT();
-  DPRINTLN("=== Roller Shades " __DATE__ " " __TIME__ " ===");
-
-  // Clear any stale core dump metadata that can block boot with CRC errors
-#if ESP_COREDUMP_ENABLE
-  esp_core_dump_image_erase();
-#endif
-
-  helper.begin();
+  DPRINTLN("=== TEST BUILD " __DATE__ " " __TIME__ " ===");
 
   Led::begin();
-  Led::off();
   // BUTTON_MAIN is simulated by both UP+DOWN pressed
   pinMode(BUTTON_UP_PIN, INPUT_PULLUP);
   pinMode(BUTTON_DOWN_PIN, INPUT_PULLUP);
@@ -92,18 +74,24 @@ void setup()
   if (state.maxSteps == 0)
     enableCalibrationMode();
 
+  // Initialize stepper with normal motion profile
   stepper.setMaxSpeed(SPEED_MAX);
   stepper.setAcceleration(ACCEL);
+  // Optional: tune pulse width for ULN2003 if needed (default is usually fine)
+  // stepper.setMinPulseWidth(2);
   stepper.setCurrentPosition(state.currentStep);
 
-  wifiConnect();
+  // Let HomeSpan manage Wi-Fi with auto-start captive portal if no creds
+  homeSpan.enableAutoStartAP();
 
-  // HomeSpan (HomeKit) setup
-  HomeSpanBridge::begin(getCurrentPosition());
+  // Initialize HomeSpan
+  homeSpan.begin(Category::WindowCoverings, "Roller Shades");
+  homeSpan.setPairingCode("281-42-814");
+
+  DPRINTLN("HomeSpan ready. Use 'W' command via Serial to configure Wi-Fi if needed.");
 
   Buttons::init();
   webBegin();
-  DPRINTLN("Setup complete");
 }
 
 void loop()
@@ -112,10 +100,13 @@ void loop()
   static unsigned long lastHousekeeping = 0;
   const unsigned long HOUSEKEEP_MS = 100; // run housekeeping less frequently
 
-  // 1. Buttons (highest priority)
+  // 1. HomeSpan loop (must be called for HomeKit communication)
+  homeSpan.poll();
+
+  // 2. Buttons (highest priority)
   Buttons::loop();
 
-  // 2. Update target/commands
+  // 2. Update target/commands (HomeKit/web may have changed the target)
   shadesControl();
 
   // 3. MOTOR - must be called every loop
@@ -173,33 +164,20 @@ void loop()
   // 4. State sync - ensure position reflects current motor position
   state.currentStep = stepper.currentPosition();
 
-  // 5. HomeSpan (HomeKit) updates
-  HomeSpanBridge::loop();
-
-  // Update position in HomeKit when it changes
-  static int lastReportedPercent = -1;
-  int currentPercent = getCurrentPosition();
-  if (currentPercent != lastReportedPercent)
-  {
-    HomeSpanBridge::updatePosition(currentPercent);
-    lastReportedPercent = currentPercent;
-  }
-
-  // 6. Non-blocking UI tasks
+  // 5. Non-blocking UI tasks
   properLedDisplay();
 
-  // 7. Housekeeping - run less frequently to avoid frequent SPIFFS/heavy ops
+  // 6. Housekeeping - run less frequently to avoid frequent SPIFFS/heavy ops
   if (millis() - lastHousekeeping >= HOUSEKEEP_MS)
   {
     handleEngineControllerActivity();
     lastHousekeeping = millis();
   }
 
-  // 8. Web and WiFi - run at the end of the loop
+  // 7. Web - run at the end of the loop (may be heavier)
   webLoop();
-  wifiLoop(); // Keep mDNS alive
 
-  // 9. Yield
+  // 8. Yield
   yield();
 }
 
@@ -210,83 +188,33 @@ void properLedDisplay()
   if (state.confirmBlinkActive)
     return;
 
-  const uint32_t t = millis();
-  bool wifiConnected = (WiFi.status() == WL_CONNECTED);
-  bool isCalibrated = (state.maxSteps > 0);
-
-  // Static mode tracking
-  static bool wasInCalibrate = false;
-  static bool wasInBlinkMode = false;
-
-  // LED behavior based on state:
-  // 1. CALIBRATE mode → bright blinking (400ms interval)
-  // 2. Not calibrated yet → fast blinking (200ms interval)
-  // 3. WiFi disconnected → fast blinking (200ms interval)
-  // 4. NORMAL + calibrated + WiFi → moving: 100% / idle: 1% brightness
-
-  if (state.currentMode == CALIBRATE)
+  // LED indicator logic using LedControl
+  // Blink LED if in calibration OR if not calibrated yet (initial setup/factory reset)
+  bool shouldBlink = (state.currentMode == CALIBRATE) || (state.maxSteps == 0);
+  if (shouldBlink)
   {
-    // Calibration: bright 400ms blink
-    if (!wasInCalibrate)
-    {
-      Led::off(); // Reset LED state on mode entry
-      nextLedMillis = 0;
-      wasInCalibrate = true;
-      wasInBlinkMode = false;
-    }
-
-    if (t > nextLedMillis)
-    {
-      nextLedMillis = t + 400;
-      Led::toggle();
-    }
+    // Slow blink during calibration/setup
+    Led::toggle();
     return;
   }
 
-  if (!isCalibrated || !wifiConnected)
+  // Normal operation: bright when moving, dim when idle
+  if (stepper.distanceToGo() != 0)
   {
-    // Not calibrated or no WiFi: fast 200ms blink
-    if (!wasInBlinkMode)
-    {
-      Led::off(); // Reset LED state on mode entry
-      nextLedMillis = 0;
-      wasInBlinkMode = true;
-      wasInCalibrate = false;
-    }
-
-    if (t > nextLedMillis)
-    {
-      nextLedMillis = t + 200;
-      Led::toggle();
-    }
-    return;
-  }
-
-  // Normal mode: reset blink flags
-  wasInCalibrate = false;
-  wasInBlinkMode = false;
-
-  // Normal operation + calibrated + WiFi connected
-  bool moving = (stepper.distanceToGo() != 0);
-
-  if (moving)
-  {
-    // Moving: bright 100%
-    Led::setBrightness(255);
+    Led::setOn(255); // Full brightness while moving
   }
   else
   {
-    // Idle: very dim glow (1%)
-    Led::setBrightness(3);
+    Led::setBrightness(20); // Dim indicator light when idle
   }
 }
 
 void reset()
 {
-  HomeSpanBridge::factoryReset();
   helper.resetsettings();
-  wifiReset();
-  delay(1000);
+  // Reset HomeSpan pairing: erase NVS and reboot
+  nvs_flash_erase();
+  delay(300);
   ESP.restart();
 }
 
@@ -316,10 +244,6 @@ void handleEngineControllerActivity()
       {
         DPRINTLN("Warning: Failed to save config after movement");
         state.lastMessage = F("Save config failed");
-      }
-      if (state.maxSteps != 0)
-      {
-        positionStateLocal = POS_STOPPED;
       }
       // Decide hold strategy
       if (HOLD_TORQUE_MS == 0)
@@ -379,11 +303,9 @@ bool loadConfig()
   JsonObjectConst json = helper.getconfig();
   state.currentStep = json["currentStep"] | 0;
   state.maxSteps = json["maxSteps"] | 0;
-  targetPercent = json["targetPositionValue"] | 0;
   // Load raw calibration points if present
   state.upStep = json["rawUpStep"] | 0;
   state.downStep = json["rawDownStep"] | 0;
-  // sync derived position for UI
   return true;
 }
 
@@ -392,7 +314,6 @@ bool saveConfig()
   StaticJsonDocument<512> doc;
   doc["currentStep"] = state.currentStep;
   doc["maxSteps"] = state.maxSteps;
-  doc["targetPositionValue"] = targetPercent;
   // store raw calibration points if present
   doc["rawUpStep"] = state.upStep;
   doc["rawDownStep"] = state.downStep;
@@ -425,49 +346,27 @@ void shadesControl()
   if (state.currentMode != NORMAL || state.maxSteps == 0)
     return;
 
-  // Convert target percentage to steps (local variable)
-  // Clamp targetPosition to [0,100] to avoid invalid writes
-  int tp = targetPercent;
-  if (tp < 0)
-    tp = 0;
-  else if (tp > 100)
-    tp = 100;
-  targetPercent = tp;
-  long targetStep = ((100 - (float)tp) / 100.0f) * state.maxSteps;
+  // Get target from state (updated by web/buttons or HomeKit will update via HomeSpan)
+  // For now use a simple state variable
+
+  long targetStep = ((100 - (float)state.targetPercent) / 100.0f) * state.maxSteps;
 
   // Command stepper to the target (run() moves it)
   if (targetStep != stepper.targetPosition())
   {
-    Serial.printf("shadesControl: %d%% → step %ld (cur %ld, max %d)\n",
-                  tp, targetStep, stepper.currentPosition(), state.maxSteps);
     // Ensure coils are energized before a new move
     stepper.enableOutputs();
     stepper.moveTo(targetStep);
     state.lastMovementTime = millis();
     // User-facing feedback for Normal mode moves
-    state.lastMessage = String("Moving to ") + targetPercent + "%";
-
-    // Update positionState based on direction
-    long dist = stepper.targetPosition() - stepper.currentPosition();
-    int newState;
-    if (dist == 0)
-      newState = POS_STOPPED;
-    else if (dist > 0)
-      newState = POS_DECREASING; // moving toward larger steps -> shades going down (closing)
-    else
-      newState = POS_INCREASING; // moving toward smaller steps -> shades going up (opening)
-
-    positionStateLocal = newState;
+    state.lastMessage = String("Moving to ") + state.targetPercent + "%";
   }
 
-  // If no distance left and we previously reported moving, update position and set STOPPED
-  if (stepper.distanceToGo() == 0 && positionStateLocal != POS_STOPPED)
+  // If no distance left, we're stopped
+  if (stepper.distanceToGo() == 0)
   {
-    int pos = getCurrentPosition();
-    positionStateLocal = POS_STOPPED;
     state.lastMessage = F("Stopped");
     // Safety: ensure coils are de-energized when we report STOPPED
-    // Disable only if we are not intentionally holding torque
     if (HOLD_TORQUE_MS == 0)
     {
       stepper.disableOutputs();
