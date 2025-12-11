@@ -19,8 +19,10 @@ struct RollerShade : Service::WindowCovering
 
   RollerShade() : Service::WindowCovering()
   {
-    currentPosition = new Characteristic::CurrentPosition(0);
-    targetPosition = new Characteristic::TargetPosition(0);
+    // Initialize with saved position from state
+    int currentPos = getCurrentPosition();
+    currentPosition = new Characteristic::CurrentPosition(currentPos);
+    targetPosition = new Characteristic::TargetPosition(state.targetPercent);
     positionState = new Characteristic::PositionState(2); // 2=stopped
   }
 

@@ -71,7 +71,11 @@ void setup()
   state.startupTime = millis();
 
   // Initialize SPIFFS for config storage
-  if (!helper.begin())
+  if (helper.begin())
+  {
+    DPRINTLN("SPIFFS initialized successfully");
+  }
+  else
   {
     DPRINTLN("ERROR: Failed to initialize SPIFFS!");
   }
@@ -90,12 +94,8 @@ void setup()
   // Initialize HomeSpan (all configuration in HomeSpanConfig.cpp)
   homeSpanSetup();
 
-  Serial.println("DEBUG: Initializing buttons...");
   Buttons::init();
-  Serial.println("DEBUG: Buttons initialized!");
-
-  Serial.println("DEBUG: Setup complete, entering loop...");
-  Serial.println("DEBUG: Web server will start after WiFi connection...");
+  DPRINTLN("Setup complete, entering loop...");
 }
 
 void loop()
@@ -111,12 +111,9 @@ void loop()
   // Start web server after WiFi is connected (deferred initialization)
   if (!webServerStarted && WiFi.status() == WL_CONNECTED)
   {
-    Serial.println("WiFi connected! Starting web server...");
     webBegin();
     webServerStarted = true;
-    Serial.print("Web server started at http://");
-    Serial.print(WiFi.localIP());
-    Serial.println(":8080");
+    DPRINTF("Web server started at http://%s:8080\n", WiFi.localIP().toString().c_str());
   }
 
   // 2. Buttons (highest priority)
@@ -314,14 +311,21 @@ int getCurrentPosition()
 bool loadConfig()
 {
   if (!helper.loadconfig())
+  {
+    DPRINTLN("No config found, using defaults");
     return false;
+  }
 
   JsonObjectConst json = helper.getconfig();
   state.currentStep = json["currentStep"] | 0;
   state.maxSteps = json["maxSteps"] | 0;
+  state.targetPercent = json["targetPercent"] | 0;
   // Load raw calibration points if present
   state.upStep = json["rawUpStep"] | 0;
   state.downStep = json["rawDownStep"] | 0;
+
+  DPRINTF("Loaded config: currentStep=%ld, maxSteps=%d, targetPercent=%d%%\n",
+          state.currentStep, state.maxSteps, state.targetPercent);
   return true;
 }
 
@@ -330,6 +334,7 @@ bool saveConfig()
   StaticJsonDocument<512> doc;
   doc["currentStep"] = state.currentStep;
   doc["maxSteps"] = state.maxSteps;
+  doc["targetPercent"] = state.targetPercent;
   // store raw calibration points if present
   doc["rawUpStep"] = state.upStep;
   doc["rawDownStep"] = state.downStep;
@@ -370,6 +375,7 @@ void shadesControl()
   // Command stepper to the target (run() moves it)
   if (targetStep != stepper.targetPosition())
   {
+    DPRINTF("Moving to target: %ld steps (%d%%)\n", targetStep, state.targetPercent);
     // Ensure coils are energized before a new move
     stepper.enableOutputs();
     stepper.moveTo(targetStep);

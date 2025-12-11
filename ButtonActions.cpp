@@ -89,8 +89,7 @@ void BA_moveToPercent(int percent)
   else if (tp > 100)
     tp = 100;
   state.targetPercent = tp;
-  Serial.printf("BA_moveToPercent: set targetPercent=%d%% (currentPos=%d%%, currentStep=%ld, maxSteps=%d)\n",
-                tp, getCurrentPosition(), stepper.currentPosition(), state.maxSteps);
+  DPRINTF("Target set to %d%%\n", tp);
   if (tp == 100)
     state.lastMessage = F("Moving UP");
   else if (tp == 0)

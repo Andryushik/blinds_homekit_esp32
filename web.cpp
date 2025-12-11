@@ -6,6 +6,7 @@
 #include "Buttons.h"
 #include "ButtonActions.h"
 #include <AccelStepper.h>
+#include "HomeSpan.h"
 
 // Accessors provided by main translation unit
 extern int getCurrentPosition();
@@ -158,8 +159,9 @@ static void handleRoot()
   htmlStr.replace("CUR_PLACEHOLDER", String(state.currentStep));
   htmlStr.replace("MAX_PLACEHOLDER", String(state.maxSteps));
 
-  // HomeKit (HomeSpan) always enabled
-  htmlStr.replace("HOMEKIT_DISPLAY", "display:block");
+  // Show HomeKit pairing card only if no controllers paired
+  bool hasPairings = (homeSpan.controllerListBegin() != homeSpan.controllerListEnd());
+  htmlStr.replace("HOMEKIT_DISPLAY", hasPairings ? "display:none" : "display:block");
 
   page = htmlStr;
   server.send(200, "text/html; charset=UTF-8", page);
