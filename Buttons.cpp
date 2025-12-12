@@ -3,11 +3,9 @@
 #include <AccelStepper.h>
 #include "pins.h"
 #include "Buttons.h"
-#include "net_wifi.h"
 #include "ButtonActions.h"
 
-// Local target percentage state (Matter-ready)
-extern int targetPercent;
+// Target percentage is kept in shared state
 
 // Functions implemented elsewhere in the main TU
 extern void reset();
@@ -89,8 +87,6 @@ namespace Buttons
         state.mainLong5Handled = true; // suppress 5s action
         DPRINTLN("MAIN long press: FACTORY RESET (10s)");
         reset();
-        delay(300);
-        ESP.restart();
       }
       else if (dur >= MAIN_LONG_PRESS_CAL_MS && !state.mainLong5Handled && state.currentMode != CALIBRATE)
       {
@@ -193,17 +189,17 @@ namespace Buttons
         {
           if (pendingPresetDir < 0)
           {
-            if (targetPercent != 100)
+            if (state.targetPercent != 100)
             {
-              targetPercent = 100;
+              state.targetPercent = 100;
               state.lastMessage = F("Moving UP");
             }
           }
           else if (pendingPresetDir > 0)
           {
-            if (targetPercent != 0)
+            if (state.targetPercent != 0)
             {
-              targetPercent = 0;
+              state.targetPercent = 0;
               state.lastMessage = F("Moving DOWN");
             }
           }

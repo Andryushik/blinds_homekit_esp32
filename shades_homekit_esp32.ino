@@ -1,15 +1,16 @@
 #include <Arduino.h>
-#include <stddef.h>
+#include "HomeSpan.h"
+#include <nvs_flash.h>
 #include "Helper.h"
 #include "pins.h"
-#include "net_wifi.h"
-#include <WiFi.h>
 #include "Buttons.h"
 #include <AccelStepper.h>
-#include <ArduinoOTA.h>
-#include <WiFi.h>
 #include "Globals.h"
 #include "web.h"
+#include "LedControl.h"
+#include "HomeKitShade.h"
+#include "HomeSpanConfig.h"
+#include <WiFi.h>
 
 // Speed/settings constants
 const float SPEED_MAX = 900.0f; // steps/s
@@ -26,6 +27,7 @@ const int MIN_TRAVEL = 4096;         // minimum calibration travel 1 full rotati
 AccelStepper stepper(AccelStepper::HALF4WIRE, MOTOR_IN1, MOTOR_IN3, MOTOR_IN2, MOTOR_IN4);
 
 Helper helper;
+static const char *HOSTNAME = "RollerShades";
 
 // Centralized runtime state (see `Globals.h` for field docs)
 ShadesState state = {
@@ -37,6 +39,7 @@ ShadesState state = {
     .maxSteps = 0,
     .upStep = 0,
     .downStep = 0,
+    .targetPercent = 0,
     .calJogDir = 0,
     .calRequireRelease = false,
     .holdingActive = false,
@@ -47,12 +50,6 @@ ShadesState state = {
     .startupTime = 0,
     .lastMovementTime = 0,
     .lastMessage = String()};
-
-// Matter migration: local target percentage and position state (no HomeKit)
-int targetPercent = 0;
-int positionStateLocal = POS_STOPPED;
-
-static uint32_t nextLedMillis = 0;
 
 int getCurrentPosition();
 bool loadConfig();
@@ -67,15 +64,30 @@ void setup()
   Serial.begin(115200);
   SERIAL_DEBUG_INIT();
   DPRINTLN("=== TEST BUILD " __DATE__ " " __TIME__ " ===");
+  // Set DHCP/mDNS hostname so routers show a friendly name
+  WiFi.setHostname(HOSTNAME);
+  // Enable Wi-Fi power save (modem-sleep) — should still keep HomeSpan/web responsive
+  WiFi.setSleep(true);
+#ifdef WIFI_PS_MIN_MODEM
+  WiFi.setSleepMode(WIFI_PS_MIN_MODEM);
+#endif
 
-  pinMode(LED_PIN, OUTPUT);
-  // Configure LED dimming using analogWrite (LEDC-backed on ESP32)
-  analogWrite(LED_PIN, 0);
+  Led::begin();
   // BUTTON_MAIN is simulated by both UP+DOWN pressed
   pinMode(BUTTON_UP_PIN, INPUT_PULLUP);
   pinMode(BUTTON_DOWN_PIN, INPUT_PULLUP);
 
   state.startupTime = millis();
+
+  // Initialize SPIFFS for config storage
+  if (helper.begin())
+  {
+    DPRINTLN("SPIFFS initialized successfully");
+  }
+  else
+  {
+    DPRINTLN("ERROR: Failed to initialize SPIFFS!");
+  }
 
   loadConfig();
   if (state.maxSteps == 0)
@@ -88,39 +100,35 @@ void setup()
   // stepper.setMinPulseWidth(2);
   stepper.setCurrentPosition(state.currentStep);
 
-  wifiConnect();
-  // Print chosen hostname and IP for quick verification (ESP32)
-  Serial.printf("Host: %s, IP: %s\n", WiFi.getHostname(), WiFi.localIP().toString().c_str());
+  // Initialize HomeSpan (all configuration in HomeSpanConfig.cpp)
+  homeSpanSetup();
 
-  // OTA setup (ArduinoOTA)
-  ArduinoOTA.setHostname("roller_shades");
-  ArduinoOTA.onStart([]()
-                     { DPRINTLN("OTA Start"); });
-  ArduinoOTA.onEnd([]()
-                   { DPRINTLN("OTA End"); });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
-                        {
-                          // low-noise progress
-                        });
-  ArduinoOTA.onError([](ota_error_t error)
-                     { DPRINTF("OTA Error: %u\n", (unsigned)error); });
-  ArduinoOTA.begin();
-
-  // Protocol setup (Matter to be integrated)
   Buttons::init();
-  webBegin();
+  DPRINTLN("Setup complete, entering loop...");
 }
 
 void loop()
 {
   static bool wasCalibrating = false;
   static unsigned long lastHousekeeping = 0;
+  static bool webServerStarted = false;   // Track web server initialization
   const unsigned long HOUSEKEEP_MS = 100; // run housekeeping less frequently
 
-  // 1. Buttons (highest priority)
+  // 1. HomeSpan loop (must be called for HomeKit communication)
+  homeSpan.poll();
+
+  // Start web server after WiFi is connected (deferred initialization)
+  if (!webServerStarted && WiFi.status() == WL_CONNECTED)
+  {
+    webBegin();
+    webServerStarted = true;
+    DPRINTF("Web server started at http://%s:8080\n", WiFi.localIP().toString().c_str());
+  }
+
+  // 2. Buttons (highest priority)
   Buttons::loop();
 
-  // 2. Update target/commands (web/Matter may change the target)
+  // 2. Update target/commands (HomeKit/web may have changed the target)
   shadesControl();
 
   // 3. MOTOR - must be called every loop
@@ -178,25 +186,20 @@ void loop()
   // 4. State sync - ensure position reflects current motor position
   state.currentStep = stepper.currentPosition();
 
-  // 5. Protocol loop placeholder (for Matter)
-
-  // 6. Non-blocking UI tasks
+  // 5. Non-blocking UI tasks
   properLedDisplay();
 
-  // OTA handler
-  ArduinoOTA.handle();
-
-  // 7. Housekeeping - run less frequently to avoid frequent SPIFFS/heavy ops
+  // 6. Housekeeping - run less frequently to avoid frequent SPIFFS/heavy ops
   if (millis() - lastHousekeeping >= HOUSEKEEP_MS)
   {
     handleEngineControllerActivity();
     lastHousekeeping = millis();
   }
 
-  // 8. Web - run at the end of the loop (may be heavier)
+  // 7. Web - run at the end of the loop (may be heavier)
   webLoop();
 
-  // 9. Yield
+  // 8. Yield
   yield();
 }
 
@@ -206,26 +209,35 @@ void properLedDisplay()
   // While confirmation blink runs, suppress slow blink to avoid overlap
   if (state.confirmBlinkActive)
     return;
+
+  // LED indicator logic using LedControl
   // Blink LED if in calibration OR if not calibrated yet (initial setup/factory reset)
   bool shouldBlink = (state.currentMode == CALIBRATE) || (state.maxSteps == 0);
   if (shouldBlink)
   {
-    const uint32_t t = millis();
-    if (t > nextLedMillis)
-    {
-      nextLedMillis = t + LED_BLINK_INTERVAL_MS;
-      digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-    }
+    // Slow blink during calibration/setup
+    Led::blinkUpdate(LED_BLINK_INTERVAL_MS);
     return;
   }
-  // Reduce brightness when idle for LED using analogWrite
-  int duty = (stepper.distanceToGo() != 0) ? 0 : 30; // dim at idle
-  analogWrite(LED_PIN, duty);
+
+  // Normal operation: bright when moving, dim when idle
+  if (stepper.distanceToGo() != 0)
+  {
+    Led::setOn(255); // Full brightness while moving
+  }
+  else
+  {
+    Led::setBrightness(20); // Dim indicator light when idle
+  }
 }
 
 void reset()
 {
   helper.resetsettings();
+  // Reset HomeSpan pairing: erase NVS and reboot
+  nvs_flash_erase();
+  delay(300);
+  ESP.restart();
 }
 
 // Turn motor power off after inactivity (kept for state housekeeping)
@@ -254,11 +266,6 @@ void handleEngineControllerActivity()
       {
         DPRINTLN("Warning: Failed to save config after movement");
         state.lastMessage = F("Save config failed");
-      }
-      if (state.maxSteps != 0)
-      {
-        int pos = getCurrentPosition();
-        positionStateLocal = POS_STOPPED;
       }
       // Decide hold strategy
       if (HOLD_TORQUE_MS == 0)
@@ -313,16 +320,21 @@ int getCurrentPosition()
 bool loadConfig()
 {
   if (!helper.loadconfig())
+  {
+    DPRINTLN("No config found, using defaults");
     return false;
+  }
 
   JsonObjectConst json = helper.getconfig();
   state.currentStep = json["currentStep"] | 0;
   state.maxSteps = json["maxSteps"] | 0;
-  targetPercent = json["targetPositionValue"] | 0;
+  state.targetPercent = json["targetPercent"] | 0;
   // Load raw calibration points if present
   state.upStep = json["rawUpStep"] | 0;
   state.downStep = json["rawDownStep"] | 0;
-  // sync derived position for UI
+
+  DPRINTF("Loaded config: currentStep=%ld, maxSteps=%d, targetPercent=%d%%\n",
+          state.currentStep, state.maxSteps, state.targetPercent);
   return true;
 }
 
@@ -331,7 +343,7 @@ bool saveConfig()
   StaticJsonDocument<512> doc;
   doc["currentStep"] = state.currentStep;
   doc["maxSteps"] = state.maxSteps;
-  doc["targetPositionValue"] = targetPercent;
+  doc["targetPercent"] = state.targetPercent;
   // store raw calibration points if present
   doc["rawUpStep"] = state.upStep;
   doc["rawDownStep"] = state.downStep;
@@ -364,52 +376,31 @@ void shadesControl()
   if (state.currentMode != NORMAL || state.maxSteps == 0)
     return;
 
-  // Convert target percentage to steps (local variable)
-  // Clamp targetPosition to [0,100] to avoid invalid writes
-  int tp = targetPercent;
-  if (tp < 0)
-    tp = 0;
-  else if (tp > 100)
-    tp = 100;
-  targetPercent = tp;
-  long targetStep = ((100 - (float)tp) / 100.0f) * state.maxSteps;
+  // Get target from state (updated by web/buttons or HomeKit will update via HomeSpan)
+  // For now use a simple state variable
+
+  long targetStep = ((100 - (float)state.targetPercent) / 100.0f) * state.maxSteps;
 
   // Command stepper to the target (run() moves it)
   if (targetStep != stepper.targetPosition())
   {
+    DPRINTF("Moving to target: %ld steps (%d%%)\n", targetStep, state.targetPercent);
     // Ensure coils are energized before a new move
     stepper.enableOutputs();
     stepper.moveTo(targetStep);
     state.lastMovementTime = millis();
     // User-facing feedback for Normal mode moves
-    state.lastMessage = String("Moving to ") + targetPercent + "%";
-
-    // Update positionState based on direction
-    long dist = stepper.targetPosition() - stepper.currentPosition();
-    int newState;
-    if (dist == 0)
-      newState = POS_STOPPED;
-    else if (dist > 0)
-      newState = POS_DECREASING; // moving toward larger steps -> shades going down (closing)
-    else
-      newState = POS_INCREASING; // moving toward smaller steps -> shades going up (opening)
-
-    positionStateLocal = newState;
+    state.lastMessage = String("Moving to ") + state.targetPercent + "%";
   }
 
-  // If no distance left and we previously reported moving, update position and set STOPPED
-  if (stepper.distanceToGo() == 0 && positionStateLocal != POS_STOPPED)
+  // If no distance left, we're stopped
+  if (stepper.distanceToGo() == 0)
   {
-    int pos = getCurrentPosition();
-    positionStateLocal = POS_STOPPED;
     state.lastMessage = F("Stopped");
     // Safety: ensure coils are de-energized when we report STOPPED
-    // Disable only if we are not intentionally holding torque
     if (HOLD_TORQUE_MS == 0)
     {
       stepper.disableOutputs();
     }
   }
 }
-
-// HomeKit removed; Matter integration is planned in a separate module

@@ -1,24 +1,16 @@
-// Seeed Studio XIAO ESP32C6 pin assignments (safe defaults per Seeed docs)
-// Reference: https://wiki.seeedstudio.com/xiao_esp32c6_getting_started/
-// Notes:
-// - Buttons use INPUT_PULLUP, pressed == LOW.
-// - ULN2003 driver for 28BYJ-48 stepper via AccelStepper HALF4WIRE.
-// - LED kept dim at standby via PWM (LEDC).
+// Seeed Studio XIAO ESP32C6 pin assignments (official Arduino variant)
+#include <Arduino.h>
 
-// On-board LED (single LED). Prefer Arduino's LED_BUILTIN if defined.
-#ifdef LED_BUILTIN
-#define LED_PIN LED_BUILTIN
-#else
-#define LED_PIN 15 // fallback; adjust if your board differs
-#endif
+// ESP32C6 XIAO has built-in LED on GPIO15
+#define LED_PIN 15
 
-// Buttons
-#define BUTTON_UP_PIN 8   // XIAO D8 (GPIO8)
-#define BUTTON_DOWN_PIN 9 // XIAO D9 (GPIO9)
+// Buttons use INPUT_PULLUP, pressed == LOW.
+#define BUTTON_UP_PIN 19   // XIAO D8 (GPIO19 / SPI SCK)
+#define BUTTON_DOWN_PIN 20 // XIAO D9 (GPIO20 / SPI MISO)
 
 // Motor ULN2003 driver coil pins (AccelStepper 4-wire HALF4WIRE)
 // Wiring on XIAO header: choose sequential pins for cleaner routing
-#define MOTOR_IN1 1 // D1 (GPIO1)
-#define MOTOR_IN2 2 // D2 (GPIO2)
-#define MOTOR_IN3 3 // D3 (GPIO3)
-#define MOTOR_IN4 4 // D4 (GPIO4)
+#define MOTOR_IN1 1  // D1 (GPIO1)
+#define MOTOR_IN2 2  // D2 (GPIO2)
+#define MOTOR_IN3 21 // D3 (GPIO21 / SPI SS)
+#define MOTOR_IN4 22 // D4 (GPIO22 / I2C SDA)

@@ -1,163 +1,110 @@
-# Shades Controller (Seeed XIAO ESP32C6, Matter-ready)
+# Roller Shades Controller (ESP32 + HomeKit)
 
-Roller shades controller for Seeed Studio XIAO ESP32C6. Drives a 28BYJ‑48 stepper via ULN2003, provides calibration, web UI, OTA updates, and is prepared for Matter integration (HomeKit code removed).
+ESP32-based roller shades controller for the Seeed XIAO ESP32C6 (or any ESP32 variant) with native HomeKit via HomeSpan, two-button control, a lightweight web UI, and persistent calibration.
 
 ## Features
 
-- HomeKit accessory: `CurrentPosition`, `TargetPosition`, `PositionState`.
-- Physical buttons: UP / DOWN; MAIN actions via simultaneous UP+DOWN.
-- LED feedback: blinks in CALIBRATE, steady (LOW, active‑low) in NORMAL.
-- Minimal persisted state (`/config.json`): currentStep, maxSteps, targetPositionValue, raw calibration points.
-- Wi-Fi captive portal on first boot (AP: "Roller Shades Configuration").
-- Continuous calibration jogging (constant speed; acceleration disabled).
-- Web UI: movement control, presets (30% / 50% / 70%), calibration start/stop/save, safe reboot, factory reset.
-- Safe reboot: saves current position, sets target to it, HTML page with auto redirect, then restart.
+- Native HomeKit WindowCovering service (no bridge required) with live position feedback
+- Web UI on port 8080 for control, calibration, pairing code display, reboot/reset
+- Two physical buttons with smooth stop, calibration, and factory reset
+- Smooth stepper motion using AccelStepper; holds torque optionally after moves
+- Status LED with movement brightness and calibration/uncalibrated blink
+- Calibration persists to SPIFFS (`/config.json`); HomeKit data stored in NVS
 
 ## Hardware
 
-- MCU: Seeed Studio XIAO ESP32C6
-- Stepper: 28BYJ‑48 — 12 V variant preferred for reliability and torque; ensure the ULN2003 board and power supply match the motor voltage.
-- Driver: ULN2003 board.
-- Buttons: 2 × tactile (wired to ground, `INPUT_PULLUP`, pressed = LOW).
-- LED: onboard single LED (`LED_BUILTIN`).
-- Power: stable supply matching motor voltage; ensure adequate current for both logic and motor.
+- Seeed Studio XIAO ESP32-C6 (or any ESP32 variant supported by HomeSpan)
+- 28BYJ-48 stepper (5V or 12V variant) + ULN2003 driver (5–12V compatible)
+- Two momentary buttons (UP/DOWN)
+- Built-in status LED on GPIO15 (active-low, PWM)
+- Supply motor/ULN2003 from its rated voltage (5–12V). Power XIAO via USB 5V (recommended). Common GND required.
 
-Pin wiring (AccelStepper HALF4WIRE, coil order MOTOR_IN1, MOTOR_IN3, MOTOR_IN2, MOTOR_IN4 as used in code):
+**Pinout (see `pins.h`):**
 
-- MOTOR_IN1 → D1 (GPIO1)
-- MOTOR_IN2 → D2 (GPIO2)
-- MOTOR_IN3 → D3 (GPIO3)
-- MOTOR_IN4 → D4 (GPIO4)
-- BUTTON_UP_PIN → D8 (GPIO8)
-- BUTTON_DOWN_PIN → D9 (GPIO9)
-- LED_PIN → `LED_BUILTIN` (fallback GPIO15)
+- Motor: IN1=GPIO1, IN2=GPIO2, IN3=GPIO21, IN4=GPIO22
+- Buttons: UP=GPIO19, DOWN=GPIO20
+- Status LED: GPIO15 (built-in, active-low PWM)
+- XIAO map: D1=GPIO1, D2=GPIO2, D3=GPIO21, D4=GPIO22, D8=GPIO19, D9=GPIO20
 
-To reverse motor direction just flip the wiring order of the four ULN2003 inputs. For example: IN1→D1, IN2→D5, IN3→D6, IN4→D7 (no code changes are required when you flip the wiring).
+> Power note: Do not feed external 5V into XIAO VBUS while also connected to USB. Recommended: power XIAO via USB, and power motor/ULN2003 from its rated supply (5–12V), sharing a common GND.
 
-Note: Adjust pins in `pins.h` if your wiring differs.
+## Firmware Setup
 
-## First Setup
+1. Install ESP32 board package in Arduino IDE or CLI (Board Manager URL: `https://espressif.github.io/arduino-esp32/package_esp32_index.json`).
+2. Select board **XIAO_ESP32C6** (or your ESP32), partition scheme **No OTA (2MB APP/2MB SPIFFS)**.
+3. Install libraries: HomeSpan (2.1+), AccelStepper (1.64+), EasyButton (2.0.3+), ArduinoJson (7+).
 
-1. Power device; connect to AP "Roller Shades Configuration" and configure Wi‑Fi (captive portal via WiFiManager).
-2. Calibrate via web UI or buttons.
-3. Use web UI for control; Matter pairing to be added.
+   ```bash
+   arduino-cli lib install "HomeSpan" "AccelStepper" "EasyButton" "ArduinoJson"
+   ```
 
-## Calibration
+4. Build/flash:
 
-Goal: learn TOP and BOTTOM raw steps to derive travel (`maxSteps`). Uses constant speed (`CAL_SPEED`) with acceleration disabled for smoothness.
+   ```bash
+   arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C6:PartitionScheme=no_ota .
+   arduino-cli upload   --fqbn esp32:esp32:XIAO_ESP32C6:PartitionScheme=no_ota -p /dev/ttyUSB0 .
+   ```
 
-Flow:
+## First Boot & Pairing
 
-1. Automatic entry if no calibration present; or hold BOTH ~5s.
-2. Jog: press UP (or DOWN) to start continuous motion; press same again to stop (toggle behavior).
-3. Save TOP: short BOTH press. Then jog to bottom.
-4. Save BOTTOM: short BOTH press again → success if travel ≥ `MIN_TRAVEL = 4096` steps.
-5. On success: rebase (TOP=0, BOTTOM=`maxSteps`), persist, exit to NORMAL.
+- On first boot or after factory reset, HomeSpan starts a setup AP **RollerShades-Setup** for Wi‑Fi provisioning (no WiFiManager needed).
+- Once on Wi‑Fi, open the web UI at `http://<device-ip>:8080` (or the mDNS host advertised by HomeSpan) for control and status.
+- Home app → Add Accessory → More Options → pick **Roller Shades** → enter setup code **281-42-814**.
 
-Tips:
+## Operation
 
-- LED blinks while in calibration.
-- Stop motion before saving (for precision).
-- If "Travel too small" message appears, increase physical travel and retry.
+**Physical buttons (ignored for 10s after boot to avoid accidental presses):**
 
-## Manual Control (NORMAL mode)
+- UP short: move to 100% (open)
+- DOWN short: move to 0% (close)
+- UP+DOWN short: smooth stop
+- UP+DOWN 5s: enter calibration
+- UP+DOWN 10s: factory reset (wipes Wi‑Fi, HomeKit, config)
 
-- UP: set target to 100% (fully open).
-- DOWN: set target to 0% (closed).
-- MAIN (UP+DOWN): short press STOP (target := current position, position state STOPPED); ~5s enter CALIBRATE; ~10s factory reset.
+**Web UI (port 8080):**
 
-## Configuration Persistence
+- Open/Close/Stop and 30/50/70% presets
+- Start/exit calibration, save top/bottom points, view travel and status message
+- Shows HomeKit code when the accessory is unpaired
+- Reboot or factory reset
 
-Saved keys: `currentStep`, `maxSteps`, `targetPositionValue`, `rawUpStep`, `rawDownStep`.
+**Status LED (built-in, GPIO15 active-low PWM):**
 
-Save triggers:
+- Slow blink (~400ms) during calibration or when not yet calibrated
+- Brighter while moving, dimmer when idle
+- Five quick flashes confirm calibration saves
 
-- Movement completes in NORMAL mode.
-- Successful calibration.
-- Just before safe reboot.
+## Calibration Flow
 
-## Reset & Safe Reboot
+1. Enter calibration (UP+DOWN 5s or web “Start”). LED blinks.
+2. Toggle jog with single presses: UP toggles upward motion, DOWN toggles downward; STOP via UP+DOWN or web Stop.
+3. Move to fully open (top) and short-press UP+DOWN to save top.
+4. Move to fully closed (bottom) and short-press UP+DOWN to save bottom. Travel must exceed `MIN_TRAVEL` (4096 steps) or save is rejected.
+5. Controller rebases zero, saves `/config.json`, blinks confirmation, and returns to normal mode.
 
-- Factory reset (MAIN ~10s): clears Wi-Fi, SPIFFS config file, HomeKit pairing; restarts into captive portal.
-- Safe Reboot (web `/reboot`): stops motion, sets target=current position, saves config, serves HTML "Rebooting" page (auto redirect ~15s), restarts.
+## Configuration
 
-## Web UI
+**Motion constants (`shades_homekit_esp32.ino`):**
 
-Root (`/`): Mode, current step, maxSteps, percent position, last message, buttons: Up / Down / Stop, Presets 30/50/70, Start/Exit Calibration, Save Top/Bottom, Safe Reboot, Factory Reset.
-
-Status polling: JS fetches `/status` every 200 ms. Stop button blinks while position changes. Messages display movement or calibration feedback (errors highlighted).
-
-Endpoints (POST unless marked GET):
-
-- `/cal/start`, `/cal/stop`
-- `/cal/up/start`, `/cal/down/start` (toggle continuous jog in CALIBRATE)
-- `/preset/30`, `/preset/50`, `/preset/70` (move to 30% / 50% / 70%)
-- `/cal/hold/stop` (stop jog OR STOP motion in NORMAL)
-- `/cal/saveTop`, `/cal/saveBottom`
-- `/reboot` (safe reboot)
-- `/factory` (factory reset)
-- `/status` (GET): JSON `{ currentStep, maxSteps, mode, position, msg }`
-
-Writes to SPIFFS limited to essential moments (movement completion, calibration success, reboot).
-
-You can reach the web UI either by entering the device IP in your browser (for example `http://192.168.x.y/`) or, once mDNS is active, via `http://roller_shades.local/` on the same LAN.
-
-## 3D Files
-
-Smart roller shades printable parts and enclosure:
-
-- <https://www.printables.com/model/1505710-smart-roller-shades-esp8266-homekit>
-
-## Software & Build
-
-- Board: `esp32:esp32:XIAO_ESP32C6`
-- Libraries: WiFiManager (ESP32), ArduinoJson v7, AccelStepper, EasyButton, FS/LittleFS.
-- Serial: 115200 baud.
-
-Build & upload via Arduino CLI:
-
-```zsh
-arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C6 .
-arduino-cli upload -p /dev/tty.usbmodemXXXX --fqbn esp32:esp32:XIAO_ESP32C6 .
+```cpp
+const float SPEED_MAX = 900.0f;      // steps/s
+const float ACCEL = 300.0f;          // steps/s^2
+const float CAL_SPEED = 300.0f;      // calibration speed
+const int32_t HOLD_TORQUE_MS = 3000; // -1=always hold, 0=drop immediately
+const int MIN_TRAVEL = 4096;         // minimum calibration distance
 ```
 
-OTA update (device hostname `roller_shades`):
+**Pins:** editable in `pins.h`.
+**Storage:** `/config.json` on SPIFFS (position, travel, raw calibration points, target). Factory reset formats SPIFFS and clears HomeKit pairing (NVS).
+**Debug:** define `SHADES_DEBUG` (see `Globals.h`) for serial logging.
 
-```zsh
-python3 $HOME/Library/Arduino15/packages/esp32/tools/espota/*/espota.py \
-  -i roller_shades.local -p 3232 -f /path/to/firmware.bin
-```
+## Troubleshooting
 
-### Constants & Configuration
+- No movement: check ULN2003 wiring/power, ensure calibration completed, enable `SHADES_DEBUG` for logs.
+- HomeKit fails to pair: remove old accessory in Home app, hold UP+DOWN 10s to factory reset, then re-pair with code 281-42-814.
+- Wi‑Fi issues: power-cycle; if the setup AP does not appear, factory reset and reconfigure Wi‑Fi.
 
-Timing constants (configurable in `Globals.h`):
+## License & Credits
 
-- `BUTTON_IGNORE_WINDOW_MS = 10000` (10s button ignore after boot)
-- `MAIN_LONG_PRESS_CAL_MS = 5000` (5s press for calibration mode)
-- `MAIN_LONG_PRESS_RESET_MS = 10000` (10s press for factory reset)
-- `PRESET_DEFER_WINDOW_MS = 150` (debounce for preset actions)
-- `LED_BLINK_INTERVAL_MS = 400` (LED blink rate)
-
-### Debugging
-
-- Serial debug: 115200 baud (enable with `-DSHADES_DEBUG` flag).
-- Build with debug:
-
-```zsh
-arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C6 \
-  --build-property build.extra_flags="-DSHADES_DEBUG" .
-
-## Matter Integration (ESP32C6)
-- Seeed guide: https://wiki.seeedstudio.com/xiao_esp32_matter_env/
-- Espressif Matter setup: use ESP-IDF with Matter examples; Arduino integration typically wraps Matter via components.
-- Plan: add a Matter Window Covering cluster to control target percentage; wire it to `targetPercent` and report position via `getCurrentPosition()`.
-- Until Matter is integrated, use the web UI for control.
-```
-
-## Inspiration
-
-- <https://www.thingiverse.com/thing:2392856/>
-
-## License
-
-Non‑commercial use (as‑is). HomeKit library subject to Apple terms for non‑commercial use.
+- MIT License
+- Thanks: [HomeSpan](https://github.com/HomeSpan/HomeSpan), [AccelStepper](http://www.airspayce.com/mikem/arduino/AccelStepper/), [EasyButton](https://github.com/evert-arias/EasyButton), [ArduinoJson](https://arduinojson.org/).

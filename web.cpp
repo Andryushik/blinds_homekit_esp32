@@ -2,13 +2,12 @@
 #include <Arduino.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
+#include <WiFi.h>
 #include "Globals.h"
 #include "Buttons.h"
 #include "ButtonActions.h"
 #include <AccelStepper.h>
-// HomeKit removed; preparing for Matter integration
-
-extern int targetPercent;
+#include "HomeSpan.h"
 
 // Accessors provided by main translation unit
 extern int getCurrentPosition();
@@ -21,7 +20,7 @@ extern void enableCalibrationMode();
 extern bool saveConfig();
 extern void reset();
 
-static WebServer server(80);
+static WebServer server(8080); // Web UI on port 8080 (HomeSpan on default 80)
 
 // Use PROGMEM for large HTML content to save RAM (global scope)
 const char HTML_PAGE[] PROGMEM = R"html(
@@ -105,6 +104,17 @@ Step: <code id='cur'>CUR_PLACEHOLDER</code> / <code id='max'>MAX_PLACEHOLDER</co
 </div>
 </div>
 
+<div class="card" id="homekit-card" style="HOMEKIT_DISPLAY">
+<h3>🍎 HomeKit Pairing</h3>
+<div style="text-align:center;margin:16px 0">
+<div style="background:#f8f9fa;padding:16px;border-radius:8px;margin:8px 0">
+<div style="font-size:14px;color:#666;margin-bottom:12px">Setup Code:</div>
+<code style="font-size:32px;font-weight:bold;color:#2c3e50;letter-spacing:4px">281-42-814</code>
+<div style="font-size:12px;color:#999;margin-top:12px">Open Home app → Add Accessory → Enter Code</div>
+</div>
+</div>
+</div>
+
 <div class="card">
 <h3>🔧 System</h3>
 <div class="btn-row">
@@ -138,7 +148,6 @@ fetch(act,{method:'POST'}).then(u).catch(()=>{alert('Error!');}); e.preventDefau
 static void handleRoot()
 {
   String page;
-  page.reserve(1024); // Reduced from 2048
   String htmlStr = FPSTR(HTML_PAGE);
   String modeClass = (state.currentMode == CALIBRATE) ? "badge-calibrate" : "badge-normal";
   String modeText = (state.currentMode == CALIBRATE) ? "CALIBRATE" : "NORMAL";
@@ -149,6 +158,11 @@ static void handleRoot()
   htmlStr.replace("POS_PLACEHOLDER", posStr);
   htmlStr.replace("CUR_PLACEHOLDER", String(state.currentStep));
   htmlStr.replace("MAX_PLACEHOLDER", String(state.maxSteps));
+
+  // Show HomeKit pairing card only if no controllers paired
+  bool hasPairings = (homeSpan.controllerListBegin() != homeSpan.controllerListEnd());
+  htmlStr.replace("HOMEKIT_DISPLAY", hasPairings ? "display:none" : "display:block");
+
   page = htmlStr;
   server.send(200, "text/html; charset=UTF-8", page);
 }
@@ -287,7 +301,7 @@ static void handleReboot()
 {
   DPRINTLN("WEB: Safe Reboot requested");
   int currentPercent = getCurrentPosition();
-  targetPercent = currentPercent;
+  state.targetPercent = currentPercent;
   stepper.stop();
   state.currentStep = stepper.currentPosition();
   if (!saveConfig())
@@ -327,6 +341,9 @@ static void handleStatus()
   doc["position"] = getCurrentPosition();
   doc["msg"] = state.lastMessage;
   doc["moving"] = (stepper.distanceToGo() != 0);
+  String ipStr = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString()
+                  : ((WiFi.getMode() & WIFI_AP) ? WiFi.softAPIP().toString() : "");
+  doc["ip"] = ipStr;
   String out;
   serializeJson(doc, out);
   server.sendHeader("Cache-Control", "no-cache");

@@ -7,16 +7,23 @@ StaticJsonDocument<4096> Helper::_doc;
 
 Helper::Helper()
 {
-  if (!LittleFS.begin())
-  {
-    DPRINTLN("LittleFS mount failed");
-  }
   this->_configfile = "/config.json";
+}
+
+bool Helper::begin()
+{
+  if (SPIFFS.begin(true, "/spiffs", 5, nullptr))
+  {
+    DPRINTLN("SPIFFS OK");
+    return true;
+  }
+  DPRINTLN("SPIFFS failed");
+  return false;
 }
 
 boolean Helper::loadconfig()
 {
-  File configFile = LittleFS.open(this->_configfile, "r");
+  File configFile = SPIFFS.open(this->_configfile, "r");
   if (!configFile)
   {
     DPRINTLN(F("Failed to open config file"));
@@ -58,7 +65,7 @@ JsonObjectConst Helper::getconfig() const
 
 boolean Helper::saveconfig(const JsonDocument &json)
 {
-  File configFile = LittleFS.open(this->_configfile, "w");
+  File configFile = SPIFFS.open(this->_configfile, "w");
   if (!configFile)
   {
     DPRINTLN("Failed to open config file for writing");
@@ -85,11 +92,11 @@ boolean Helper::saveconfig(const JsonDocument &json)
   configFile.flush(); // Making sure it's saved
   // Close file so resources are released and data is committed
   configFile.close();
-  DPRINTLN("Saved JSON to LittleFS");
+  DPRINTLN("Saved JSON to SPIFFS");
   return true;
 }
 
 void Helper::resetsettings()
 {
-  LittleFS.format();
+  SPIFFS.format();
 }
