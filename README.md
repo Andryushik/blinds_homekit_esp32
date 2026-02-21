@@ -1,6 +1,6 @@
-# Roller Shades Controller (ESP32 + HomeKit)
+# Blinds Controller (ESP32 + HomeKit)
 
-ESP32-based roller shades controller for the Seeed XIAO ESP32C6 (or any ESP32 variant) with native HomeKit via HomeSpan, two-button control, a lightweight web UI, and persistent calibration.
+ESP32-based blinds controller for the Seeed XIAO ESP32C6 (or any ESP32 variant) with native HomeKit via HomeSpan, two-button control, a lightweight web UI, and persistent calibration.
 
 ## Features
 
@@ -48,9 +48,9 @@ ESP32-based roller shades controller for the Seeed XIAO ESP32C6 (or any ESP32 va
 
 ## First Boot & Pairing
 
-- On first boot or after factory reset, HomeSpan starts a setup AP **RollerShades-Setup** for Wi‑Fi provisioning (no WiFiManager needed).
+- On first boot or after factory reset, HomeSpan starts a setup AP **Blinds-Setup** for Wi‑Fi provisioning (no WiFiManager needed).
 - Once on Wi‑Fi, open the web UI at `http://<device-ip>:8080` (or the mDNS host advertised by HomeSpan) for control and status.
-- Home app → Add Accessory → More Options → pick **Roller Shades** → enter setup code **281-42-814**.
+- Home app → Add Accessory → More Options → pick **Blinds** → enter setup code **281-42-814**.
 
 ## Operation
 
@@ -85,7 +85,7 @@ ESP32-based roller shades controller for the Seeed XIAO ESP32C6 (or any ESP32 va
 
 ## Configuration
 
-**Motion constants (`shades_homekit_esp32.ino`):**
+**Motion constants (`blinds_homekit_esp32.ino`):**
 
 ```cpp
 const float SPEED_MAX = 900.0f;      // steps/s
