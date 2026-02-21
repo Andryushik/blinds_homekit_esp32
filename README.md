@@ -104,6 +104,7 @@ const int MIN_TRAVEL = 4096;         // minimum calibration distance
 - No movement: check ULN2003 wiring/power, ensure calibration completed, enable `SHADES_DEBUG` for logs.
 - HomeKit fails to pair: remove old accessory in Home app, hold UP+DOWN 10s to factory reset, then re-pair with code 281-42-814.
 - Wi‑Fi issues: power-cycle; if the setup AP does not appear, factory reset and reconfigure Wi‑Fi.
+- Build error `Sketch too big`: use partition scheme **No OTA (2MB APP/2MB SPIFFS)**. For CLI, compile/upload with `:PartitionScheme=no_ota` in `--fqbn`.
 
 ## License & Credits
 
