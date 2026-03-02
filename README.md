@@ -69,11 +69,9 @@ ESP32-based blinds controller for the Seeed XIAO ESP32C6 (or any ESP32 variant) 
 - Shows HomeKit code when the accessory is unpaired
 - Reboot or factory reset
 
-<p align="center">
-   <img src="assets/IMG_1327.JPG" alt="Web UI" width="800"/>
-</p>
+![Web UI](assets/IMG_1327.JPG)
 
-_Screenshot: web UI (click to view full size)_
+#### Screenshot: web UI (click to view full size)
 
 **Status LED (built-in, GPIO15 active-low PWM):**
 
