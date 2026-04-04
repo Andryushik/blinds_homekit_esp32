@@ -4,6 +4,7 @@
 #include "Helper.h"
 #include "pins.h"
 #include "Buttons.h"
+#include "ButtonActions.h"
 #include <AccelStepper.h>
 #include "Globals.h"
 #include "web.h"
@@ -11,6 +12,7 @@
 #include "HomeKitShade.h"
 #include "HomeSpanConfig.h"
 #include <WiFi.h>
+#include "esp_mac.h"
 
 // Speed/settings constants
 const float SPEED_MAX = 900.0f; // steps/s
@@ -27,7 +29,11 @@ const int MIN_TRAVEL = 4096;         // minimum calibration travel 1 full rotati
 AccelStepper stepper(AccelStepper::HALF4WIRE, MOTOR_IN1, MOTOR_IN3, MOTOR_IN2, MOTOR_IN4);
 
 Helper helper;
-static const char *HOSTNAME = "Blinds";
+
+// Device identity — built from MAC suffix in setup()
+char deviceHostname[20];  // "Blinds-XXXX"
+char deviceApSSID[24];    // "Blinds-XXXX-Setup"
+char deviceSerial[12];    // "BL-XXXX"
 
 // Centralized runtime state (see `Globals.h` for field docs)
 ShadesState state = {
@@ -64,8 +70,18 @@ void setup()
   Serial.begin(115200);
   SERIAL_DEBUG_INIT();
   DPRINTLN("=== TEST BUILD " __DATE__ " " __TIME__ " ===");
+
+  // Build unique device identity from base MAC (works before WiFi init)
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  snprintf(deviceHostname, sizeof(deviceHostname), "Blinds-%02X%02X", mac[4], mac[5]);
+  snprintf(deviceApSSID, sizeof(deviceApSSID), "%s-Setup", deviceHostname);
+  snprintf(deviceSerial, sizeof(deviceSerial), "BL-%02X%02X", mac[4], mac[5]);
+  DPRINTF("Device ID: %s (MAC: %02X:%02X:%02X:%02X:%02X:%02X)\n",
+          deviceHostname, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
   // Set DHCP/mDNS hostname so routers show a friendly name
-  WiFi.setHostname(HOSTNAME);
+  WiFi.setHostname(deviceHostname);
   // Enable Wi-Fi power save (modem-sleep) — should still keep HomeSpan/web responsive
   WiFi.setSleep(true);
 #ifdef WIFI_PS_MIN_MODEM
@@ -79,14 +95,14 @@ void setup()
 
   state.startupTime = millis();
 
-  // Initialize SPIFFS for config storage
+  // Initialize LittleFS for config storage
   if (helper.begin())
   {
-    DPRINTLN("SPIFFS initialized successfully");
+    DPRINTLN("LittleFS initialized successfully");
   }
   else
   {
-    DPRINTLN("ERROR: Failed to initialize SPIFFS!");
+    DPRINTLN("ERROR: Failed to initialize LittleFS!");
   }
 
   loadConfig();
@@ -117,12 +133,19 @@ void loop()
   // 1. HomeSpan loop (must be called for HomeKit communication)
   homeSpan.poll();
 
-  // Start web server after WiFi is connected (deferred initialization)
-  if (!webServerStarted && WiFi.status() == WL_CONNECTED)
+  // Start/restart web server when WiFi connects (handles initial start + reconnection)
+  bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+  if (wifiConnected && !webServerStarted)
   {
     webBegin();
     webServerStarted = true;
     DPRINTF("Web server started at http://%s:8080\n", WiFi.localIP().toString().c_str());
+  }
+  else if (!wifiConnected && webServerStarted)
+  {
+    // WiFi lost — mark for restart when it reconnects
+    webServerStarted = false;
+    DPRINTLN("WiFi disconnected, web server will restart on reconnect");
   }
 
   // 2. Buttons (highest priority)
@@ -189,7 +212,7 @@ void loop()
   // 5. Non-blocking UI tasks
   properLedDisplay();
 
-  // 6. Housekeeping - run less frequently to avoid frequent SPIFFS/heavy ops
+  // 6. Housekeeping - run less frequently to avoid frequent FS/heavy ops
   if (millis() - lastHousekeeping >= HOUSEKEEP_MS)
   {
     handleEngineControllerActivity();
@@ -304,17 +327,7 @@ void handleEngineControllerActivity()
 // 0% = bottom (closed), 100% = top (open)
 int getCurrentPosition()
 {
-  if (state.maxSteps <= 0)
-    return 0;
-  // Integer math with rounding: pos = 100 * (maxSteps - currentStep) / maxSteps
-  long numer = 100L * ((long)state.maxSteps - (long)state.currentStep);
-  // add half divisor for rounding
-  int pos = (int)((numer + (state.maxSteps / 2)) / (long)state.maxSteps);
-  if (pos < 0)
-    pos = 0;
-  if (pos > 100)
-    pos = 100;
-  return pos;
+  return calculatePercentForStep(state.currentStep);
 }
 
 bool loadConfig()
@@ -341,10 +354,10 @@ bool loadConfig()
 bool saveConfig()
 {
   StaticJsonDocument<512> doc;
+  doc["configVersion"] = 1;
   doc["currentStep"] = state.currentStep;
   doc["maxSteps"] = state.maxSteps;
   doc["targetPercent"] = state.targetPercent;
-  // store raw calibration points if present
   doc["rawUpStep"] = state.upStep;
   doc["rawDownStep"] = state.downStep;
   return helper.saveconfig(doc);
@@ -379,7 +392,7 @@ void shadesControl()
   // Get target from state (updated by web/buttons or HomeKit will update via HomeSpan)
   // For now use a simple state variable
 
-  long targetStep = ((100 - (float)state.targetPercent) / 100.0f) * state.maxSteps;
+  long targetStep = (long)(100 - state.targetPercent) * state.maxSteps / 100;
 
   // Command stepper to the target (run() moves it)
   if (targetStep != stepper.targetPosition())
@@ -393,14 +406,23 @@ void shadesControl()
     state.lastMessage = String("Moving to ") + state.targetPercent + "%";
   }
 
-  // If no distance left, we're stopped
+  // If no distance left, we're stopped — set message only on transition
+  static bool wasStopped = true;
   if (stepper.distanceToGo() == 0)
   {
-    state.lastMessage = F("Stopped");
+    if (!wasStopped)
+    {
+      state.lastMessage = F("Stopped");
+      wasStopped = true;
+    }
     // Safety: ensure coils are de-energized when we report STOPPED
     if (HOLD_TORQUE_MS == 0)
     {
       stepper.disableOutputs();
     }
+  }
+  else
+  {
+    wasStopped = false;
   }
 }

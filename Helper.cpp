@@ -12,18 +12,12 @@ Helper::Helper()
 
 bool Helper::begin()
 {
-  if (SPIFFS.begin(true, "/spiffs", 5, nullptr))
-  {
-    DPRINTLN("SPIFFS OK");
-    return true;
-  }
-  DPRINTLN("SPIFFS failed");
-  return false;
+  return LittleFS.begin(true, "/spiffs", 5, "spiffs");
 }
 
 boolean Helper::loadconfig()
 {
-  File configFile = SPIFFS.open(this->_configfile, "r");
+  File configFile = LittleFS.open(this->_configfile, "r");
   if (!configFile)
   {
     DPRINTLN(F("Failed to open config file"));
@@ -38,11 +32,8 @@ boolean Helper::loadconfig()
     return false;
   }
 
-  // Clear previous content and parse JSON into persistent document
   _doc.clear();
   DeserializationError err = deserializeJson(_doc, configFile);
-
-  // Avoid leaving opened files
   configFile.close();
 
   if (err)
@@ -50,7 +41,6 @@ boolean Helper::loadconfig()
     DPRINTLN("Failed to parse config file");
     return false;
   }
-  // Ensure a config version exists
   if (!_doc["configVersion"].is<int>())
   {
     _doc["configVersion"] = 1;
@@ -65,38 +55,24 @@ JsonObjectConst Helper::getconfig() const
 
 boolean Helper::saveconfig(const JsonDocument &json)
 {
-  File configFile = SPIFFS.open(this->_configfile, "w");
+  File configFile = LittleFS.open(this->_configfile, "w");
   if (!configFile)
-  {
-    DPRINTLN("Failed to open config file for writing");
     return false;
-  }
 
-  // Attach schema version
-  // Use a local StaticJsonDocument to build the saved JSON (1KB should be sufficient)
+  // Copy to local document — ArduinoJson v6 cannot serialize
+  // correctly through a polymorphic const JsonDocument& reference
   StaticJsonDocument<1024> doc;
   JsonObject dst = doc.to<JsonObject>();
-  JsonObjectConst src = json.as<JsonObjectConst>();
-  for (JsonPairConst kv : src)
-  {
+  for (JsonPairConst kv : json.as<JsonObjectConst>())
     dst[kv.key()] = kv.value();
-  }
-  dst["configVersion"] = 1;
 
-  if (serializeJson(doc, configFile) == 0)
-  {
-    DPRINTLN("Failed to write JSON to config file");
-    configFile.close();
-    return false;
-  }
-  configFile.flush(); // Making sure it's saved
-  // Close file so resources are released and data is committed
+  size_t written = serializeJson(doc, configFile);
+  configFile.flush();
   configFile.close();
-  DPRINTLN("Saved JSON to SPIFFS");
-  return true;
+  return written > 0;
 }
 
 void Helper::resetsettings()
 {
-  SPIFFS.format();
+  LittleFS.format();
 }
