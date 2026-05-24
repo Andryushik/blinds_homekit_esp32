@@ -14,13 +14,13 @@ ESP32-based blinds controller for the Seeed XIAO ESP32C6 (or any ESP32 variant) 
 ## Hardware
 
 - Seeed Studio XIAO ESP32-C6 (or any ESP32 variant supported by HomeSpan)
-- 28BYJ-48 stepper (5V or 12V variant) + ULN2003 driver (5–12V compatible)
+- 28BYJ-48 stepper (5V variant) + ULN2003 driver
 - Two momentary buttons (UP/DOWN)
 - Built-in status LED on GPIO15 (active-low, PWM)
 - 3D printed parts: [Smart Blinds (ESP32 HomeKit) on Printables](https://www.printables.com/model/1622982-blinds-diy-esp32-homekitwebui)
 
-> Recommended: 12V motor + 12V PSU 2A for better torque, and a buck converter (12V→5V) to power the ESP32/XIAO. Common GND required.
-> Power note: Do not feed external 5V into XIAO VBUS while also connected to USB. If using a 12V PSU, power motor/ULN2003 from 12V and use a buck converter (12V→5V) for the ESP32/XIAO, sharing a common GND.
+> **Power:** 5V USB-style charger → branched to **both** ULN2003 (motor) and XIAO 5V input, common GND. The motor pull-in current can drop the rail enough to trip the XIAO's brownout detector, so a **bulk capacitor (≥470 µF, 10V+) across 5V/GND near XIAO is strongly recommended** — without it, you may see silent reboots mid-move (visible in the debug log as `reset=BROWNOUT` in the next telnet banner).
+> Power note: Do not feed external 5V into XIAO VBUS while also connected to USB at the same time.
 > Build note: In my case, all parts fit inside the printed enclosure except the power supply.
 > **Pinout (see `pins.h`):**
 
@@ -101,7 +101,22 @@ const int MIN_TRAVEL = 4096;         // minimum calibration distance
 
 **Pins:** editable in `pins.h`.
 **Storage:** `/config.json` on LittleFS (position, travel, raw calibration points, target). Factory reset formats LittleFS and clears HomeKit pairing (NVS).
-**Debug:** define `SHADES_DEBUG` (see `Globals.h`) for serial logging.
+**Debug:** define `SHADES_DEBUG` (see `Globals.h`) for serial logging. When this flag is set, the device also opens a telnet console on port 23 that streams the same `DPRINT` output — useful for tracing motor/HomeKit issues remotely without USB.
+
+**Remote log usage:**
+
+- Live tail: `nc <device-ip> 23` (or `nc Blinds-XXXX.local 23` via mDNS — XXXX = last 2 octets of the MAC). One session at a time; a second client gets `Busy — another session active`.
+- Persistent capture with auto-reconnect: the repo ships `log-blinds.sh` (writes to `blinds.log` next to the script, timestamps each line, reconnects automatically when the device reboots):
+
+  ```bash
+  ./log-blinds.sh                              # foreground (Ctrl+C to stop)
+  nohup ./log-blinds.sh > /dev/null 2>&1 &     # detached background — survives terminal close
+  pkill -f log-blinds.sh                       # stop it
+  tail -f blinds.log                           # watch live while it runs in background
+  ```
+
+  Default target is `192.168.2.220:23`; override with `./log-blinds.sh <host> [port]`. `blinds.log` is in `.gitignore` (`*.log` rule).
+- What you'll see in the stream: `WEB: Move to N% preset`, `Button: UP pressed`, `Moving to target: N steps`, `Stopped`, calibration save messages, WiFi reconnects. The device prints only on events — an idle motor is silent.
 
 ## OTA Updates
 
@@ -109,7 +124,14 @@ After the first serial flash, firmware can be updated over WiFi (OTA) using Home
 
 - **OTA password:** `28142814` (same as HomeKit pairing code)
 - In Arduino IDE: the device appears as a network port under Tools → Port → Network ports
-- Via CLI: `arduino-cli upload --fqbn esp32:esp32:XIAO_ESP32C6:PartitionScheme=min_spiffs --port <device-ip> .`
+- Via CLI (the `-F password=...` flag is required — without it arduino-cli falls into an interactive prompt and fails in non-TTY shells):
+
+  ```bash
+  arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C6:PartitionScheme=min_spiffs . && \
+  arduino-cli upload  --fqbn esp32:esp32:XIAO_ESP32C6:PartitionScheme=min_spiffs \
+                      --port <device-ip> -F password=28142814 .
+  ```
+
 - **Note:** The first flash after changing partition scheme must be done via USB serial.
 
 ## Troubleshooting
