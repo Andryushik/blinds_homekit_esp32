@@ -35,6 +35,7 @@ for target in "${TARGETS[@]}"; do
   echo "==> OTA upload to $target"
   arduino-cli upload --fqbn "$FQBN" \
     --input-dir "$BUILD_DIR" \
+    --protocol network \
     --port "$target" -F password="$OTA_PASSWORD" \
     .
 done
