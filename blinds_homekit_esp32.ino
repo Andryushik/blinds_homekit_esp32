@@ -13,31 +13,8 @@
 #include "HomeSpanConfig.h"
 #include <WiFi.h>
 #include "esp_mac.h"
-#include "esp_system.h"
 #include "RemoteLog.h"
-
-static const char *resetReasonStr()
-{
-  switch (esp_reset_reason())
-  {
-  case ESP_RST_POWERON:   return "POWERON";
-  case ESP_RST_EXT:       return "EXTERNAL";
-  case ESP_RST_SW:        return "SOFTWARE";
-  case ESP_RST_PANIC:     return "PANIC";
-  case ESP_RST_INT_WDT:   return "INT_WDT";
-  case ESP_RST_TASK_WDT:  return "TASK_WDT";
-  case ESP_RST_WDT:       return "WDT";
-  case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
-  case ESP_RST_BROWNOUT:  return "BROWNOUT";
-  case ESP_RST_SDIO:      return "SDIO";
-  default:                return "UNKNOWN";
-  }
-}
-
-// Captured once in setup(); referenced by RemoteLog's connect banner so a
-// reconnecting telnet client sees why the device last rebooted (the boot-time
-// DPRINT is missed because no client is attached at boot).
-const char *gResetReason = "UNKNOWN";
+#include "Diagnostics.h"
 
 // Speed/settings constants
 const float SPEED_MAX = 900.0f; // steps/s
@@ -93,29 +70,16 @@ void motorTick();
 
 void setup()
 {
+  // TODO(hardware-fix): remove this call once a bulk capacitor is installed on
+  // the 5V rail next to the XIAO. Until then, motor pulses dip VCC below the
+  // BOD threshold and reset the chip mid-move — see Diagnostics.cpp for risks.
+  diag_disableBrownout();
+
   Serial.begin(115200);
   SERIAL_DEBUG_INIT();
   DPRINTLN("=== TEST BUILD " __DATE__ " " __TIME__ " ===");
-  gResetReason = resetReasonStr();
-  DPRINTF("Reset reason: %s\n", gResetReason);
-
-  // Log WiFi connect/disconnect events for post-mortem of network glitches
-  WiFi.onEvent([](arduino_event_t *event) {
-    switch (event->event_id)
-    {
-    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-      DPRINTF("WiFi disconnected (reason=%d)\n",
-              event->event_info.wifi_sta_disconnected.reason);
-      break;
-    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-      DPRINTF("WiFi got IP=%s rssi=%ddBm\n",
-              IPAddress(event->event_info.got_ip.ip_info.ip.addr).toString().c_str(),
-              WiFi.RSSI());
-      break;
-    default:
-      break;
-    }
-  });
+  diag_init();
+  diag_installWiFiEventLogger();
 
   // Build unique device identity from base MAC (works before WiFi init)
   uint8_t mac[6];
@@ -128,11 +92,10 @@ void setup()
 
   // Set DHCP/mDNS hostname so routers show a friendly name
   WiFi.setHostname(deviceHostname);
-  // Disable WiFi modem-sleep. CPU is unaffected either way (modem-sleep only
-  // gates RF/PHY/BB, per ESP-IDF docs), but unicast packet RX latency with
-  // sleep enabled can spike to one DTIM period and cause HomeKit to mark the
-  // accessory "Not Responding". See esp-idf #9766 and HomeSpan #497 patterns.
-  // Power cost on the mains-powered XIAO: tens of mA — acceptable.
+  // WiFi.setSleep(false) — modem-sleep disabled. We get lower-latency HomeKit
+  // (no "Not Responding" jitter from DTIM-delayed unicast RX). The extra
+  // ~30-50 mA continuous radio draw is negligible vs the motor pulse and
+  // covered by the brownout workaround above + the bulk cap on the 5V rail.
   WiFi.setSleep(false);
 
   Led::begin();
