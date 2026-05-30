@@ -70,11 +70,6 @@ void motorTick();
 
 void setup()
 {
-  // TODO(hardware-fix): remove this call once a bulk capacitor is installed on
-  // the 5V rail next to the XIAO. Until then, motor pulses dip VCC below the
-  // BOD threshold and reset the chip mid-move — see Diagnostics.cpp for risks.
-  diag_disableBrownout();
-
   Serial.begin(115200);
   SERIAL_DEBUG_INIT();
   DPRINTLN("=== TEST BUILD " __DATE__ " " __TIME__ " ===");
